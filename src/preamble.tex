@@ -1,0 +1,64 @@
+% ---------------------------------------------------------------------------
+% Encoding, language, typography
+% NOTE: sapthesis already loads xkeyval, etoolbox, geometry, fontenc, textcomp, lmodern,
+% caption, graphicx, color, booktabs, amsmath, fancyhdr. Do not load them again.
+% ---------------------------------------------------------------------------
+\usepackage[utf8]{inputenc}
+\usepackage{microtype}
+\usepackage{csquotes}          % required by biblatex for proper quoting
+
+% ---------------------------------------------------------------------------
+% Math, figures, tables, code
+% ---------------------------------------------------------------------------
+\usepackage{amssymb}                 % amsmath, graphicx, booktabs, fontenc, lmodern, caption are loaded by sapthesis
+\graphicspath{{assets/plots/}{assets/icons/}}   % relative to the project root
+\usepackage{tabularx}
+\usepackage{siunitx}           % units and number formatting: \SI{8}{\giga\byte}
+\usepackage{subcaption}        % subfigures
+\usepackage{xcolor}
+\usepackage{tikz}
+\usetikzlibrary{arrows.meta, positioning, calc, fit}
+\usepackage{pgfplots}
+\pgfplotsset{compat=1.18}
+\usepackage[ruled,vlined]{algorithm2e}   % pseudo-code for the algorithms
+\usepackage{listings}          % source excerpts from NCCL
+\lstset{
+  basicstyle=\ttfamily\small,
+  columns=fullflexible,
+  breaklines=true,
+  numbers=left,
+  numberstyle=\tiny,
+  frame=single,
+  captionpos=b,
+}
+
+% ---------------------------------------------------------------------------
+% Bibliography (biblatex + biber)
+% ---------------------------------------------------------------------------
+\usepackage[
+  backend=biber,
+  style=numeric,
+  sorting=nyt,
+  maxbibnames=10,
+]{biblatex}
+\addbibresource{src/references.bib}
+
+% ---------------------------------------------------------------------------
+% Links and cross-references (load hyperref late, cleveref after it)
+% ---------------------------------------------------------------------------
+\usepackage[hidelinks]{hyperref}   % print-friendly; see sapthesis doc for colors
+\usepackage[nameinlink,capitalise]{cleveref}
+
+% ---------------------------------------------------------------------------
+% Acronyms
+% ---------------------------------------------------------------------------
+\usepackage[printonlyused]{acronym}
+
+% ---------------------------------------------------------------------------
+% Project macros (keep notation consistent across chapters)
+% ---------------------------------------------------------------------------
+\newcommand{\bigO}[1]{\mathcal{O}\!\left(#1\right)}
+\newcommand{\nccl}{\textsc{NCCL}}
+\newcommand{\bine}{\textsc{Bine}}
+\newcommand{\pat}{\textsc{PAT}}
+\newcommand{\todo}[1]{\textcolor{red}{[TODO: #1]}}   % remove before submission

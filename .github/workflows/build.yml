@@ -1,0 +1,65 @@
+name: Build thesis
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Compile with latexmk
+        uses: xu-cheng/latex-action@v3
+        with:
+          root_file: src/main.tex
+          latexmk_use_xelatex: false
+          # .latexmkrc sets the output dir to build/ and runs biber
+
+      - name: Fail on unresolved references or citations
+        run: |
+          if grep -Ei "undefined (references|citations)|There were undefined|Citation .* undefined|Reference .* undefined|multiply-defined" build/main.log; then
+            echo "::error::Unresolved references/citations in build/main.log"
+            exit 1
+          fi
+
+      - name: Count leftover TODOs
+        run: |
+          n=$(grep -rn '\\todo{' src | wc -l)
+          echo "::notice::$n \\todo{} markers remaining"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: thesis-pdf
+          path: build/main.pdf
+          if-no-files-found: error
+
+  release:
+    # Only for tags like v0.1, v1.0-draft, ...: git tag v0.1 && git push origin v0.1
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: thesis-pdf
+
+      - name: Name the PDF after the tag
+        run: mv main.pdf "thesis-${GITHUB_REF_NAME}.pdf"
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: thesis-${{ github.ref_name }}.pdf
+          generate_release_notes: true

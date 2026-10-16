@@ -1,0 +1,79 @@
+% !TEX program = pdflatex
+% !TEX root = main.tex
+%
+% Build (from the project root):   latexmk
+% Clean:                           latexmk -C
+%
+% Document class: sapthesis v5.1 (the degree type is derived from \course{...}, not from an option).
+% Remove "english" if the thesis is written in Italian (and load babel italian).
+\documentclass[english, oneside]{sapthesis}
+
+\input{src/preamble}
+
+% ---------------------------------------------------------------------------
+% Metadata (fill in)
+% ---------------------------------------------------------------------------
+\title{Implementation of Bine Tree Algorithms\\in NCCL for Multi-GPU Systems}
+\author{Daniele Savino}
+\IDnumber{2140356}
+\course{Laurea in Informatica}        % official ITALIAN course name, even if the thesis is in English
+\courseorganizer{Facoltà di Ingegneria dell'Informazione,\\Informatica e Statistica}
+\AcademicYear{2026/2027}
+\advisor{Prof. Daniele De Sensi}     % the "relatore"
+\authoremail{savino.2140356@studenti.uniroma1.it}
+\website{https://github.com/DanieleSavino}
+\copyyear{2027}
+\thesistype{Bachelor thesis}
+
+\hypersetup{
+  pdftitle  = {Implementation of Bine Tree Algorithms in NCCL for Multi-GPU Systems},
+  pdfauthor = {Daniele Savino},
+}
+
+\begin{document}
+
+% ---------------------------------------------------------------------------
+% Front matter
+% ---------------------------------------------------------------------------
+\frontmatter
+\maketitle
+% \dedication{...}   % optional, recommended by sapthesis instead of long acknowledgements
+\input{src/frontmatter/abstract}
+\input{src/frontmatter/acknowledgements}
+\tableofcontents
+\listoffigures
+\listoftables
+\input{src/frontmatter/acronyms}
+
+% ---------------------------------------------------------------------------
+% Main matter
+% ---------------------------------------------------------------------------
+\mainmatter
+
+% Introduction and related work are written last (they "come naturally").
+\input{src/sections/01-introduction}
+\input{src/sections/02-background}
+
+% Implementation (the core of the thesis)
+\input{src/sections/03-goals-and-constraints}
+\input{src/sections/04-tree-baseline}
+\input{src/sections/05-butterfly-bine}
+\input{src/sections/06-structural-limits}
+\input{src/sections/07-staging-patcopy}
+\input{src/sections/08-reduce-bcast-allreduce}
+
+\input{src/sections/09-evaluation}
+\input{src/sections/10-discussion}
+\input{src/sections/11-conclusion}
+
+% ---------------------------------------------------------------------------
+% Back matter
+% ---------------------------------------------------------------------------
+\appendix
+\input{src/sections/appendix-a}
+
+\backmatter
+\nocite{*}
+\printbibliography[heading=bibintoc]
+
+\end{document}

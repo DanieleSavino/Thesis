@@ -7,7 +7,7 @@ First working result and reference point.
 \section{Implementation}\label{sec:tree-impl}
 
 This section describes how the schedule of the Bine tree is computed and used in NCCL.
-The notation is the one of Chapter~\ref{ch:bine}.
+The notation is the one of Chapter~\ref{ch:background}.
 The schedule is built for $p=2^s$ ranks and for root $0$, and it is only defined for power-of-two numbers of ranks.
 Any other root is obtained by rotating the root-$0$ schedule (Sec.~\ref{sec:tree-root}).
 
@@ -191,7 +191,7 @@ where \texttt{pmod} is the non-negative modulo and \texttt{idx(r, i, s)} is the 
 The functions are marked as host and device inline, so they can be called from both host code and device code, and they cost $O(1)$ per step.
 The returned value $-1$ means that the rank does not communicate at that step.
 
-\section{Use in collectives}
+\subsection{Use in collectives}
 
 The tables describe the communication pattern only.
 Which data is moved at each step (the whole buffer for a broadcast or a reduce, the blocks of a subtree for a scatter or a gather) is determined by the collective.
@@ -246,6 +246,8 @@ Without the direct flag the kernel uses \texttt{send}$(o_{in},n)$, which reads t
 
 \paragraph{Root copy.}
 Finally, if the buffers of the root differ, the root copies its slice from \texttt{sendbuff} to \texttt{recvbuff} with \texttt{reduceCopy}, with one source and one destination and no reduction, so that its output is complete whichever send path was taken above (the staged \texttt{send} does not write the output buffer).
+
+Table~\ref{tab:bine-bcast-calls} summarises which \nccl{} operation is used in each case.
 
 \begin{table}[t]
 \centering

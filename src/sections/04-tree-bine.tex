@@ -1,0 +1,335 @@
+\chapter{Bine Tree Algorithms}\label{ch:tree}
+
+First working result and reference point.
+
+\section{Ring versus tree: $\bigO{n}$ versus $\bigO{\log n}$}
+
+\section{Implementation}\label{sec:tree-impl}
+
+This section describes how the schedule of the Bine tree is computed and used in NCCL.
+The notation is the one of Chapter~\ref{ch:bine}.
+The schedule is built for $p=2^s$ ranks and for root $0$, and it is only defined for power-of-two numbers of ranks.
+Any other root is obtained by rotating the root-$0$ schedule (Sec.~\ref{sec:tree-root}).
+
+\subsection{Output of the construction}
+
+The schedule is stored in two tables of size $p \times s$,
+\begin{align}
+  \Send(r,i) &\in \{0,\dots,p-1\}\cup\{\none\}, \\
+  \Recv(r,i) &\in \{0,\dots,p-1\}\cup\{\none\},
+\end{align}
+for $r\in[0,p-1]$ and $i\in[0,s-1]$.
+$\Send(r,i)=q$ means that rank $r$ sends to rank $q$ at step $i$, and $\Recv(r,i)=q$ means that rank $r$ receives from rank $q$ at step $i$.
+The value $\none$ means that rank $r$ does not communicate at step $i$.
+The tables are filled by
+
+\begin{verbatim}
+void ncclGetBineTree(int nRanks, int steps,
+                     int *sendTable, int *recvTable);
+\end{verbatim}
+
+which writes two flat arrays of $p\cdot s$ integers (\texttt{sendTable} and \texttt{recvTable}), with $-1$ encoding $\none$, and asserts that $2^{s}=p$.
+
+\subsection{Quantities used by the construction}
+
+The construction uses the following quantities, restated here only to fix the names used in the code.
+For a step $i\in[0,s-1]$, let $M_i=2^{s-i}-1$ be the mask with the $s-i$ least significant bits set (\texttt{(1 << (steps - step)) - 1}).
+Let $\nbr{r}=\rtn(r)$ and
+\begin{equation}
+  \pi_i(r) \;=\; \ntr\!\bigl(\rtn(r)\oplus M_i\bigr)
+  \label{eq:partner}
+\end{equation}
+be the partner of $r$ at step $i$.
+Let $u(r)$ be the number of consecutive least significant bits of $\nbr{r}$ equal to its least significant bit; a non-root rank receives at step
+\begin{equation}
+  i_r \;=\; s-u(r), \qquad i_r\in[0,s-1],
+  \label{eq:recv-step}
+\end{equation}
+and we set $i_0=-1$ for the root, which already has the data before step $0$.
+In the code, $u(r)$ is obtained by scanning the bits of $\nbr{r}$ from the least significant one and stopping at the first bit that differs from it (capped at $s$ bits).
+
+\subsection{Definition of the schedule}
+
+A rank receives exactly once, at step $i_r$, from its parent, and forwards the data at each subsequent step $i>i_r$.
+Therefore, for every rank $r$ and step $i$:
+\begin{align}
+  \Recv(r,i) &=
+  \begin{cases}
+    \pi_i(r) & \text{if } r\neq 0 \text{ and } i=i_r,\\
+    \none & \text{otherwise,}
+  \end{cases}
+  \label{eq:recv-table}\\[2pt]
+  \Send(r,i) &=
+  \begin{cases}
+    \pi_i(r) & \text{if } i_r < i \le s-1,\\
+    \none & \text{otherwise.}
+  \end{cases}
+  \label{eq:send-table}
+\end{align}
+The parent of $r\neq0$ is $\pi_{i_r}(r)$, and the children of $r$ are $\{\pi_i(r)\mid i_r<i\le s-1\}$.
+For the root, $\nbr{0}=0\cdots0$ and $i_0=-1$, so it sends at every step, to the rank whose negabinary representation is $M_i$:
+\begin{equation}
+  \Send(0,i) \;=\; \ntr(M_i)
+  \;=\; \Bigl(\sum_{j=0}^{s-i-1}(-2)^j\Bigr)\bmod p .
+  \label{eq:root}
+\end{equation}
+
+\subsection{Algorithm}
+
+Algorithm~\ref{alg:bine-schedule} computes both tables.
+For each rank $r$ it computes its receive step $i_r$, registers the edge with its parent, and then registers the edges with its children.
+Each edge is written on both endpoints at the same time ($\Send$ on the sender, $\Recv$ on the receiver), so the two tables are consistent by construction.
+
+\begin{algorithm}[t]
+\caption{Schedule of the Bine tree rooted at rank $0$ ($p=2^s$).}
+\label{alg:bine-schedule}
+\begin{algorithmic}[1]
+\Require $p=2^s$
+\Ensure tables $\Send,\Recv$ of size $p\times s$
+\State $\Send(r,i)\gets\none,\ \Recv(r,i)\gets\none$ for all $r\in[0,p-1]$, $i\in[0,s-1]$
+\For{$r\gets 0$ \textbf{to} $p-1$}
+  \State $\nbr{r}\gets \rtn(r)$
+  \If{$r=0$}
+    \State $i_r\gets -1$ \Comment{root: sends at every step}
+  \Else
+    \State $u\gets$ number of consecutive LSBs of $\nbr{r}$ equal to its LSB
+    \State $i_r\gets s-u$ \Comment{Eq.~\eqref{eq:recv-step}}
+    \State $\mathit{parent}\gets \ntr(\nbr{r}\oplus M_{i_r})$
+    \State $\Recv(r,i_r)\gets \mathit{parent}$;\quad $\Send(\mathit{parent},i_r)\gets r$
+  \EndIf
+  \For{$i\gets i_r+1$ \textbf{to} $s-1$}
+    \State $q\gets \ntr(\nbr{r}\oplus M_i)$ \Comment{Eq.~\eqref{eq:partner}}
+    \State $\Send(r,i)\gets q$;\quad $\Recv(q,i)\gets r$
+  \EndFor
+\EndFor
+\end{algorithmic}
+\end{algorithm}
+
+\begin{lemma}[Consistency]
+\label{lem:consistency}
+For every $r\neq 0$ and $i>i_r$, the rank $q=\pi_i(r)$ satisfies $i_q=i$, and $\pi_i(q)=r$.
+Hence $\Send(r,i)=q \iff \Recv(q,i)=r$, and every non-root rank receives exactly once.
+\end{lemma}
+\begin{proof}[Proof sketch]
+Let $b$ be the common value of the $u(r)=s-i_r$ least significant bits of $\nbr{r}$.
+Since $i>i_r$, we have $s-i<u(r)$, so the $s-i$ least significant bits of $\nbr{r}$ are all equal to $b$, and so is bit $s-i$ (when $i\ge1$).
+Applying $\oplus M_i$ flips the $s-i$ least significant bits to $\bar b$ and leaves bit $s-i$ equal to $b$, therefore $u(q)=s-i$ and $i_q=i$.
+The same holds for the root, since $\nbr{\pi_i(0)}=M_i$ has $u=s-i$.
+Finally $\pi_i(q)=r$ because XOR with $M_i$ is an involution.
+\end{proof}
+
+Every non-root rank has exactly one receive, so the tree has $p-1$ edges.
+Rank $r\neq0$ performs $s-1-i_r=u(r)-1$ sends, and the root performs $s$ sends.
+The construction costs $O(s)$ operations per rank (plus the cost of the conversions), i.e., $O(p\log p)$ in total, and the tables occupy $O(p\log p)$ memory.
+
+\subsection{Example: $p=8$}
+
+For $p=8$ ($s=3$) the masks are $M_0=111$, $M_1=011$, $M_2=001$, and the negabinary representations are
+\begin{center}
+\begin{tabular}{@{}l*{8}{c}@{}}
+\toprule
+$r$ & 0 & 1 & 2 & 3 & 4 & 5 & 6 & 7 \\
+\midrule
+$\nbr{r}$ & 000 & 001 & 110 & 111 & 100 & 101 & 010 & 011 \\
+$u(r)$ & -- & 1 & 1 & 3 & 2 & 1 & 1 & 2 \\
+$i_r$ & $-1$ & 2 & 2 & 0 & 1 & 2 & 2 & 1 \\
+\bottomrule
+\end{tabular}
+\end{center}
+For instance, rank $3$ ($\nbr{3}=111$) receives at step $0$ from $\ntr(111\oplus111)=\ntr(000)=0$, and sends at step $1$ to $\ntr(111\oplus011)=\ntr(100)=4$ and at step $2$ to $\ntr(111\oplus001)=\ntr(110)=2$.
+The resulting edges are $0\to3$ at step $0$; $0\to7$ and $3\to4$ at step $1$; $0\to1$, $3\to2$, $7\to6$ and $4\to5$ at step $2$.
+The tables are:
+\begin{center}
+\begin{tabular}{@{}c ccc @{\qquad} ccc@{}}
+\toprule
+ & \multicolumn{3}{c}{$\Send(r,i)$} & \multicolumn{3}{c}{$\Recv(r,i)$} \\
+\cmidrule(lr){2-4}\cmidrule(l){5-7}
+$r$ & $i{=}0$ & $i{=}1$ & $i{=}2$ & $i{=}0$ & $i{=}1$ & $i{=}2$ \\
+\midrule
+0 & 3 & 7 & 1 & -- & -- & -- \\
+1 & -- & -- & -- & -- & -- & 0 \\
+2 & -- & -- & -- & -- & -- & 3 \\
+3 & -- & 4 & 2 & 0 & -- & -- \\
+4 & -- & -- & 5 & -- & 3 & -- \\
+5 & -- & -- & -- & -- & -- & 4 \\
+6 & -- & -- & -- & -- & -- & 7 \\
+7 & -- & -- & 6 & -- & 0 & -- \\
+\bottomrule
+\end{tabular}
+\end{center}
+where ``--'' stands for $\none$.
+
+\subsection{Arbitrary root}\label{sec:tree-root}
+
+Only the root-$0$ tables are generated.
+For a collective with root $t\in[0,p-1]$, rank $r$ is mapped to the virtual rank $r'=(r-t)\bmod p$, the root-$0$ table is read at $r'$, and the peer found is mapped back by adding $t$:
+\begin{equation}
+  \Send_t(r,i) =
+  \begin{cases}
+    \bigl(\Send(r',i)+t\bigr)\bmod p & \text{if } \Send(r',i)\neq\none,\\
+    \none & \text{otherwise,}
+  \end{cases}
+  \qquad r'=(r-t)\bmod p,
+  \label{eq:rotation}
+\end{equation}
+and likewise for $\Recv_t$.
+The rotation is a relabeling of the ranks, so it preserves the structure of the tree and the modular distances between communicating ranks.
+A single table of $p\cdot s$ entries per direction therefore serves every root, and no table has to be generated per root.
+
+The lookup is implemented by the inline functions \texttt{ncclBineTreeSend} and \texttt{ncclBineTreeRecv}, which differ only in the table they are given and both call
+\begin{verbatim}
+NCCL_HOST_DEVICE_INLINE int
+ncclBineTreeLookup(const int *virtualTable, int nRanks, int steps,
+                   int root, int rank, int step)
+{
+  const int vrank = pmod(rank - root, nRanks);
+  const int vpeer = virtualTable[idx(vrank, step, steps)];
+  return (vpeer < 0) ? -1 : pmod(vpeer + root, nRanks);
+}
+\end{verbatim}
+where \texttt{pmod} is the non-negative modulo and \texttt{idx(r, i, s)} is the index of entry $(r,i)$ in the flat table.
+The functions are marked as host and device inline, so they can be called from both host code and device code, and they cost $O(1)$ per step.
+The returned value $-1$ means that the rank does not communicate at that step.
+
+\section{Use in collectives}
+
+The tables describe the communication pattern only.
+Which data is moved at each step (the whole buffer for a broadcast or a reduce, the blocks of a subtree for a scatter or a gather) is determined by the collective.
+
+\subsection{Broadcast}\label{sec:tree-bcast}
+
+The broadcast sends the buffer of the root to all the other ranks along the Bine tree rooted at \texttt{work->root}.
+Every edge of the tree carries the whole data (there are no per-subtree blocks as in scatter or gather), so a rank receives the data once, at its receive step $i_r$, and then forwards it to its children at the steps $i_r+1,\dots,s-1$ (Eqs.~\eqref{eq:recv-table} and~\eqref{eq:send-table}).
+
+\paragraph{Overview.}
+The broadcast is implemented by a new device function, \texttt{runBine}, which follows the structure of the other \nccl{} collective kernels (Sec.~\ref{sec:nccl-device}).
+Each thread block runs it for one channel, and the threads of the block cooperate in every data movement.
+The kernel does not implement any data movement itself: it only decides, for each chunk and each step, who the peer is and which \texttt{Primitives} operation to call, and \nccl{} takes care of the protocol, the transport and the synchronisation.
+In outline, a block does the following:
+\begin{enumerate}
+  \item it reads from the shared-memory state of the channel the rank, the number of ranks, the Bine tables, and from the work descriptor the root and the \texttt{direct} flags;
+  \item it obtains its slice of the buffer, and the chunk size, with \texttt{ncclCollCbdPart};
+  \item for every chunk of the slice and every step of the tree, it looks up its peers in the rotated tables and, if it is active in that step, it calls the \texttt{Primitives} operation that corresponds to its role (receive from the parent, or send to a child);
+  \item the root, if needed, copies its input to its output buffer.
+\end{enumerate}
+
+\paragraph{State of the channel.}
+The rank, the number of ranks and the Bine data of the channel are read from \texttt{ncclShmem} (Sec.~\ref{sec:nccl-channels}); the Bine data, \texttt{channel.bine}, holds the number of steps $s$ and the root-$0$ tables $\Send$ and $\Recv$, and is the only Bine-specific state added to the channel.
+The work descriptor provides the root and the \texttt{direct} flags: \texttt{NCCL\_P2P\_READ} tells that the receive can use the zero-copy path (\textit{canDirectRecv}), and \texttt{NCCL\_P2P\_WRITE} that the send can (\textit{canDirectSend}) (Sec.~\ref{sec:nccl-transport}).
+
+\paragraph{Slice and buffers.}
+\texttt{ncclCollCbdPart} (Sec.~\ref{sec:nccl-cbd}) returns the slice of the channel and its chunk size, \texttt{gridOffset}, \texttt{channelCount} and \texttt{chunkCount}.
+The root reads the data from \texttt{sendbuff}, while every other rank works in place on \texttt{recvbuff}: it receives into it and forwards from it.
+The input buffer is therefore \texttt{sendbuff} on the root and \texttt{recvbuff} elsewhere, and the output buffer is \texttt{recvbuff} on all the ranks.
+
+\paragraph{Loops.}
+The outer loop iterates over the chunks of the slice (Sec.~\ref{sec:nccl-chunks}), the last one being shorter if the slice is not a multiple of the chunk, and the inner loop over the $s$ steps of the tree.
+A chunk therefore travels through the whole tree before the next one starts, and consecutive chunks are pipelined across the levels of the tree: a rank can receive chunk $k+1$ from its parent as soon as it has finished forwarding chunk $k$, thanks to the slots of the connection (Sec.~\ref{sec:nccl-transport}).
+The offset of a chunk is the same on every rank, since all the ranks move the same region of the buffer.
+
+\paragraph{Peers of the step.}
+At each step the kernel queries the two tables, rotated for the actual root, with \texttt{ncclBineTreeSend} and \texttt{ncclBineTreeRecv} (Sec.~\ref{sec:tree-root}), which return $\Send_t(r,i)$ and $\Recv_t(r,i)$, or $-1$ if the rank does not communicate in that step.
+By Eqs.~\eqref{eq:recv-table} and~\eqref{eq:send-table} a rank receives only at the step $i_r$ and sends only at the steps $i>i_r$, so at each step at most one of the two peers differs from $-1$, and the steps in which the rank is idle are skipped.
+Per chunk, a non-root rank performs one receive and $u(r)-1$ sends, and the root performs $s$ sends.
+For example, for $p=8$ and root $0$ (Sec.~\ref{sec:tree-impl}), the root sends in the three steps to ranks $3$, $7$ and $1$, while rank $3$ receives from rank $0$ at step $0$ and sends at steps $1$ and $2$ to ranks $4$ and $2$.
+
+\paragraph{Receive step.}
+A \texttt{Primitives} object (Sec.~\ref{sec:nccl-primitives}) is created with \texttt{FanAsymmetric}$\langle1,0\rangle$, i.e., one receive peer and no send peer, with the input and output buffers and the thread information.
+Since each step has a single peer in a single direction, an object with one peer is enough and no fused operation (such as \texttt{recvCopySend}) is needed.
+If \textit{canDirectRecv} is set the kernel calls \texttt{directRecv}$(o,n)$, which writes the $n$ elements at offset $o$ directly in the output buffer, otherwise it calls \texttt{recv}$(o,n)$, which takes them from the slots of the connection and stores them in the output buffer.
+
+\paragraph{Send step.}
+The object is created with \texttt{FanAsymmetric}$\langle0,1\rangle$, i.e., no receive peer and one send peer.
+If \textit{canDirectSend} is set, the root with \texttt{sendbuff} equal to \texttt{recvbuff} already holds the data in the output buffer and uses \texttt{directSend}$(o_{in},o_{out},n)$; in all the other cases the kernel uses \texttt{directCopySend}$(o_{in},o_{out},n)$, which in addition stores the elements in the local output buffer (the non-root ranks use it as well, with the same buffer as input and output).
+Both variants write directly in the buffer of the peer.
+Without the direct flag the kernel uses \texttt{send}$(o_{in},n)$, which reads the elements from the input buffer and puts them in the slots of the connection.
+
+\paragraph{Root copy.}
+Finally, if the buffers of the root differ, the root copies its slice from \texttt{sendbuff} to \texttt{recvbuff} with \texttt{reduceCopy}, with one source and one destination and no reduction, so that its output is complete whichever send path was taken above (the staged \texttt{send} does not write the output buffer).
+
+\begin{table}[t]
+\centering
+\caption{\nccl{} operations used by the Bine broadcast, by role of the rank in the step.}
+\label{tab:bine-bcast-calls}
+\begin{tabular}{@{}lll@{}}
+\toprule
+Role & Fan & Operation \\
+\midrule
+Receive from the parent, direct path available & $\langle1,0\rangle$ & \texttt{directRecv} \\
+Receive from the parent, otherwise & $\langle1,0\rangle$ & \texttt{recv} \\
+Send to a child, root with \texttt{sendbuff}$=$\texttt{recvbuff}, direct & $\langle0,1\rangle$ & \texttt{directSend} \\
+Send to a child, any other rank, direct & $\langle0,1\rangle$ & \texttt{directCopySend} \\
+Send to a child, otherwise & $\langle0,1\rangle$ & \texttt{send} \\
+Root with \texttt{sendbuff}$\neq$\texttt{recvbuff}, after the loop & -- & \texttt{reduceCopy} (copy) \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\section{Testing}\label{sec:tree-testing}
+
+The schedule is a deterministic function of the number of ranks $p=2^s$ and of the root $t$, and every property that the collectives rely on is a statement about finite tables.
+We therefore test the schedule exhaustively against a set of invariants, for every $p=2^s$ with $1\le s\le 20$ (up to $1,048,576$ ranks), every root $t\in[0,p-1]$, every rank and every step.
+The invariants are checked on the rooted schedule $\Send_t,\Recv_t$ obtained through the rotation of Eq.~\eqref{eq:rotation}, and not only on the root-$0$ tables, so that they also validate the rotation.
+
+For a root $t$, let $\rho_t(r)$ be the first step at which rank $r$ receives, with $\rho_t(t)=-1$ for the root and $\rho_t(r)=s$ if a non-root rank never receives.
+Let $r'=(r-t)\bmod p$ be the virtual rank of $r$.
+
+\subsection{Invariants}
+
+For every $p=2^s$, root $t$, rank $r$ and step $i\in[0,s-1]$:
+\begin{enumerate}
+  \item[\textbf{(I1)}]\label{inv:once} \emph{Single reception.} The number of steps $i$ with $\Recv_t(r,i)\neq\none$ is $1$ if $r\neq t$ and $0$ if $r=t$.
+  \item[\textbf{(I2)}]\label{inv:sym} \emph{Send/receive symmetry.} If $\Send_t(a,i)=b\neq\none$, then $\Recv_t(b,i)=a$.
+  \item[\textbf{(I3)}]\label{inv:causal} \emph{Causality.} If $\Send_t(r,i)\neq\none$, then $i>\rho_t(r)$. In particular, the root may send from step $0$.
+  \item[\textbf{(I4)}]\label{inv:self} \emph{No self-communication.} $\Send_t(r,i)\neq r$ and $\Recv_t(r,i)\neq r$.
+  \item[\textbf{(I5)}]\label{inv:reach} \emph{Reachability.} Every rank $r\neq t$ has $\rho_t(r)\le s-1$.
+  \item[\textbf{(I6)}]\label{inv:root} \emph{The root never receives.} $\Recv_t(t,i)=\none$ for all $i$.
+  \item[\textbf{(I7)}]\label{inv:xor} \emph{Partner differs in the $s-i$ least significant bits.} If $q$ is the send or the receive peer of $r$ at step $i$, then
+  \begin{equation}
+    \rtn(r')\oplus\rtn(q')=M_i,\qquad r'=(r-t)\bmod p,\ \ q'=(q-t)\bmod p .
+    \label{eq:inv-xor}
+  \end{equation}
+\end{enumerate}
+
+\subsection{Why they hold and what they guarantee}
+
+\paragraph{Tree structure (I1)--(I6).}
+These invariants are structural: they do not depend on how the partners are chosen.
+Together they say that the edges $\{a\xrightarrow{i}b \mid \Send_t(a,i)=b\}$ form a spanning tree rooted at $t$ along which the steps strictly increase.
+We follow the argument one step at a time.
+
+\emph{Every rank has exactly one parent.}
+A non-root rank $r$ receives only at the step $i_r=s-u(r)$ of Eq.~\eqref{eq:recv-step}, and $u(r)$ is a single number, so $r$ has exactly one incoming edge (I1).
+For the root, $i_0=-1$ and no receive is ever defined (I6).
+Rotation is a bijection on the ranks and does not change the steps in which a rank communicates, so this holds for every root.
+By (I2), the incoming edge of $r$ is the send of its parent at the same step.
+This is the consistency lemma (Lemma~\ref{lem:consistency}): the peer of $r$ at step $i$ is $q=\pi_i(r)$, XOR with $M_i$ is an involution so the peer of $q$ is $r$, and the receive step of $q$ is exactly $i$.
+It is what allows sender and receiver to agree on the pairing using only local information.
+
+\emph{Data flows forward in time.}
+By Eq.~\eqref{eq:send-table} a rank sends only at steps $i>i_r$, and from step $0$ for the root (I3).
+Hence the parent $a$ of a rank $r$ satisfies $\rho_t(a)<\rho_t(r)$, so following the parent pointers strictly decreases the receive step.
+The walk cannot enter a cycle and ends at a rank without an incoming edge, which by (I1) and (I6) can only be the root.
+In particular, the data a rank forwards is always already available.
+
+\emph{Every rank is reached, and no edge is degenerate.}
+For every $r\neq0$ the representation $\nbr{r}$ has at least one least significant bit, so $1\le u(r)\le s$ and $i_r\in[0,s-1]$: every non-root rank has a receive step inside the schedule (I5).
+For $i\le s-1$ the mask $M_i$ has at least one bit set, so $\rtn(r)\oplus M_i\neq\rtn(r)$, and since $\ntr$ inverts $\rtn$, $\pi_i(r)\neq r$ (I4).
+
+Consequently the tree has $p-1$ edges, a broadcast on it completes in $s$ steps with every rank holding the data before it forwards it, and the reversed tree (exchanging the roles of $\Send_t$ and $\Recv_t$) gives the corresponding reduce.
+
+\paragraph{Identifying the Bine tree (I7).}
+Invariants (I1)--(I6) are also satisfied by any binomial tree, so they do not identify the Bine tree.
+Invariant (I7) does.
+It is the defining equation of the partner, Eq.~\eqref{eq:partner}, rewritten as $\rtn(r)\oplus\rtn(\pi_i(r))=M_i$, and it holds for the receive peer as well, since the parent of $r$ is $\pi_{i_r}(r)$ and XOR is symmetric.
+It is stated on the virtual ranks because the root-$t$ schedule is the root-$0$ schedule relabeled by the rotation.
+For a given $r$ and $i$ it admits exactly one peer, because XOR with $M_i$ and $\ntr$ are bijections.
+Hence the tables coincide with the ones defined by Eq.~\eqref{eq:partner}, and they inherit the properties of the Bine tree proved in the Bine chapter, in particular the distance between communicating ranks.
+
+\subsection{Scope and limits}
+
+The tests are exhaustive over all root and rank pairs for $p\le 1,048,576$ and all power-of-two values in between, with a cost of $O(p^2 s)$ lookups per value of $p$.
+Beyond this range, the correctness of the construction relies on the argument given in Lemma~\ref{lem:consistency}, not on testing.
+The test of (I7) uses the same conversion $\rtn$ as the generator, so it checks that the tables realize the defining equation, while the independent check of the construction as a whole comes from the structural invariants (I1)--(I6).
+
+\section{Preliminary results}

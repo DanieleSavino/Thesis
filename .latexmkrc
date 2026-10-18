@@ -6,3 +6,4 @@ $bibtex_use = 2;                 # run biber when needed
 @default_files = ('src/main.tex');
 $out_dir = 'build';
 $aux_dir = 'build';
+$pdf_previewer = 'xdg-open %O %S';

@@ -1,4 +1,5 @@
 build/
+*.zip
 *.aux
 *.log
 *.out

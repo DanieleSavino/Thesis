@@ -111,7 +111,7 @@ An \emph{algorithm} defines the communication pattern.
 The ones relevant here are \emph{ring} (each rank communicates only with its predecessor and successor, and data circulates around the ring: $\bigO{n}$ steps for $n$ ranks), \emph{tree} (the double binary tree of Sec.~\ref{sec:nccl-graph}, $\bigO{\log n}$ steps across nodes) and \pat{}~\cite{jeaugey2025pat} for all-gather and reduce-scatter.
 Algorithms for in-network reduction (\texttt{NVLS}, \texttt{CollNet}) exist as well.
 For every algorithm and collective there is a device function that implements the pattern, and a \emph{pattern} identifier (\texttt{ncclPattern\_t}, for example tree-down for broadcast and tree-up for reduce) used by the host to compute the number of steps and the chunking.
-The Bine tree broadcast of Chapter~\ref{ch:tree} is a new device function of this kind, for the tree algorithm.
+The Bine broadcast and reduce of Chapter~\ref{ch:tree} are new device functions of this kind, registered as a new algorithm, \texttt{NCCL\_ALGO\_BINE}, with its own pattern identifier (\texttt{ncclPatternBine}).
 
 \section{Work distribution across channels}\label{sec:nccl-distribution}
 
@@ -179,7 +179,7 @@ Because the slot FIFO has several slots, consecutive chunks are pipelined: while
 \subsection{Kernel structure}
 
 The kernel is launched with one thread block per channel, and the number of threads depends on the protocol and on \texttt{nWarps} of the work descriptor.
-At the start, each block loads in \texttt{ncclShmem} the communicator, its channel and the description of the work, and then runs the device function of the collective (for instance, \texttt{runRing}, \texttt{runTreeUpDown}, or \texttt{runBine} for the Bine broadcast).
+At the start, each block loads in \texttt{ncclShmem} the communicator, its channel and the description of the work, and then runs the device function of the collective (for instance, \texttt{runRing}, \texttt{runTreeUpDown}, or \texttt{runBine} for the Bine broadcast and reduce).
 All the threads of the block execute the device function together, and cooperate in every data movement.
 The function obtains its slice with \texttt{ncclCollCbdPart} (Sec.~\ref{sec:nccl-cbd}), and then loops over the chunks, calling the primitives.
 
@@ -199,7 +199,8 @@ Offsets are in elements, relative to the input buffer (\texttt{inpIx}) or to the
   \item[\texttt{recv}$(o_{out},n)$] receives $n$ elements from the peer(s) and stores them in the output buffer.
   \item[\texttt{directSend}$(o_{in},o_{out},n)$ and \texttt{directRecv}$(o_{out},n)$] the same operations on the zero-copy path: the data is exchanged directly with the user buffer of the peer (with a write by the sender, or a read by the receiver) instead of through the slots of the connection; the output offset tells where the data lands in the buffer of the peer. They are usable only when the transport and the registered buffers allow it, as indicated by the \texttt{direct} flags of the work descriptor, and otherwise the kernel uses the staged versions.
   \item[\texttt{copySend}, \texttt{directCopySend}$(o_{in},o_{out},n)$] send $n$ elements and, in addition, store them in the local output buffer.
-  \item[\texttt{recvSend}, \texttt{recvCopySend}, \texttt{recvReduceSend}, \texttt{recvReduceCopy}, \dots] fused operations that receive, optionally reduce with the local input, optionally copy to the output, and forward to the next peer in a single pass over the data. They are what makes the ring and the tree efficient, since data is not written to and read back from memory between the receive and the send. The Bine broadcast of Chapter~\ref{ch:tree} does not use them, since in each step a rank either receives or sends.
+  \item[\texttt{recvSend}, \texttt{recvCopySend}, \texttt{recvReduceSend}, \texttt{recvReduceCopy}, \dots] fused operations that receive, optionally reduce with the local input, optionally copy to the output, and forward to the next peer in a single pass over the data. They are what makes the ring and the tree efficient, since data is not written to and read back from memory between the receive and the send. The Bine broadcast and reduce of Chapter~\ref{ch:tree} do not use the ones that also send, since in each step a rank either receives or sends; the reduce uses \texttt{recvReduceCopy}, which stops at the reduction and the copy.
+  \item[\texttt{sendFromOutput}, \texttt{directSendFromOutput}$(o,n)$] send $n$ elements read from the output buffer instead of the input buffer, to forward a partial result that has been accumulated there.
 \end{description}
 Under the hood the data movement is done by \texttt{reduceCopy}, a device routine that reads from a number of sources, optionally reduces them with the operator, and writes to a number of destinations, with a protocol-specific load/store path.
 It can also be called directly by a kernel, and it is used, with one source and one destination, as a plain copy, for example to copy the local buffer when the input and output buffers are different.

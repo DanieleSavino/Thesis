@@ -349,5 +349,74 @@ Beyond this range, correctness relies on the arguments of this section, not on t
 The test of (\ref{inv:xor}) uses the same conversion $\rtn$ as the generator, so it checks that the tables realize the defining equation; the independent check of the construction as a whole comes from the structural invariants (\ref{inv:once})--(\ref{inv:root}).
 
 %==============================================================================
-\section{Preliminary results}\label{sec:tree-results}
-% TODO
+%==============================================================================
+\section{Experimental results}\label{sec:tree-results}
+
+% Requires: graphicx
+This section compares the Bine broadcast and reduce of Sec.~\ref{sec:tree-collectives} with the native \nccl{} ring
+\paragraph{Setup.}
+Experiments run on the MeluXina supercomputer (see the acknowledgments), on GPU nodes with four NVIDIA A100 GPUs each, connected by NVLink within the node.
+We use $p\in\{4,8,16,32,64,128\}$ ranks, i.e., from one to 32 nodes with one rank per GPU, message sizes from 1\,kB to 64\,MB, and root $0$.
+Each point is the mean time over 40 iterations, after 10 warmup iterations, and the experiments were repeated several times with consistent results.
+Both axes of the figures are logarithmic.
+Since a node holds four GPUs, $p=4$ is entirely intra-node, and every larger $p$ also uses the inter-node network.
+
+\begin{figure}[t]
+  \centering
+  \includegraphics[width=\linewidth]{assets/plots/Bcast_SIMPLE_Ranks.png}
+  \caption{Broadcast, \texttt{SIMPLE} protocol: mean time versus number of ranks, Bine against ring, for six message sizes.}
+  \label{fig:tree-bcast}
+\end{figure}
+
+\begin{figure}[t]
+  \centering
+  \includegraphics[width=\linewidth]{assets/plots/Reduce_SIMPLE_Ranks.png}
+  \caption{Reduce, \texttt{SIMPLE} protocol: mean time versus number of ranks, Bine against ring, for six message sizes.}
+  \label{fig:tree-reduce}
+\end{figure}
+
+\subsection{Broadcast}
+
+Figure~\ref{fig:tree-bcast} shows the expected separation between $\bigO{n}$ and $\bigO{\log n}$ (Sec.~\ref{sec:tree-motivation}).
+For messages up to 4\,MB, the ring time grows almost linearly with $p$ (about $2\times$ per doubling of the ranks at large $p$), while the Bine time grows by a roughly constant increment per doubling, i.e., logarithmically.
+At $p=128$ Bine is about $5.9\times$ faster at 1\,kB, $6.5\times$ at 16\,kB, $5.5\times$ at 256\,kB, $4.8\times$ at 1\,MB and $6\times$ at 4\,MB.
+
+At $p=4$ the ring is faster for all sizes (by $20$--$30\%$ up to 4\,MB), and the crossover is between 4 and 8 ranks.
+Two effects coincide here.
+With so few ranks the tree has few steps to save, and $p=4$ is also the only configuration that stays on NVLink, while from $p=8$ on the inter-node network is involved.
+The measurements do not separate the two.
+
+The 64\,MB case is different.
+Bine is slower than the ring for $p\le64$ (about $2\times$ at $p=4$, $1.5\times$ at $p=8$, and $1.2$--$1.3\times$ from $p=16$ to $64$), and the two are on par at $p=128$.
+Both algorithms jump sharply between $p=4$ and $p=8$ (about $5\times$ for the ring and $3.8\times$ for Bine), which is the cost of leaving NVLink for the network.
+For large messages the broadcast is bandwidth-bound: every edge of the tree carries the whole buffer, and the root forwards it $s$ times, whereas the pipelined ring moves each chunk once per link.
+The ring therefore pays a latency term that grows with $p$ but a small bandwidth term, and Bine does the opposite.
+This is consistent with the measurements, and suggests that the tree wins only when the latency term of the ring dominates.
+Part of the ring's advantage at 64\,MB is also a property of the network bandwidth rather than of the algorithm alone.
+
+\subsection{Reduce}
+
+The reduce (Figure~\ref{fig:tree-reduce}) behaves like the broadcast for small and medium messages.
+At $p=128$ Bine is about $5.3\times$ faster at 1\,kB, $5.7\times$ at 16\,kB, $4.9\times$ at 256\,kB, and $3.4$--$3.5\times$ at 1\,MB and 4\,MB.
+At $p=4$ the ring is again faster, and at $p=8$ the two are within a few percent for sizes up to 4\,MB: they coincide at 1\,kB, Bine is slightly ahead from 16\,kB to 1\,MB, and the ring is marginally ahead at 4\,MB.
+The advantage of Bine at large $p$ is smaller than for the broadcast at 1\,MB and 4\,MB.
+
+The 1\,MB curve of Bine has a feature that is not present in the other sizes.
+Its time is almost flat between $p=32$ and $p=64$ (about $580$ and $620\,\mu$s), and then rises by about $60\%$ at $p=128$.
+As a result, the speedup over the ring grows from about $1.5\times$ at $p=32$ to $2.8\times$ at $p=64$, and then to $3.4\times$ at $p=128$.
+This behavior was reproduced across repeated runs, so it is a property of the system and not measurement noise.
+% TODO: cause not isolated yet; candidates are the mapping of ranks to nodes/switches at 128 ranks, or a change in chunking or protocol parameters selected at this size. Verify with profiling or with a different node allocation before stating one.
+We have not isolated its cause.
+
+For 64\,MB, Bine is slower than the ring at every scale: about $3.4\times$ at $p=4$, between $2.1\times$ and $2.4\times$ for $p=8$ to $64$, and still about $1.8\times$ at $p=128$, with no crossover in the measured range.
+As in the broadcast, both algorithms jump between $p=4$ and $p=8$ (about $5\times$ for the ring).
+Unlike the broadcast, a rank with several children must receive and reduce the whole buffer once per child (Sec.~\ref{sec:tree-collectives}), so the root performs $s$ full-size reductions in sequence, while the ring spreads the reduction over all ranks.
+This penalizes the tree more in the reduce than in the broadcast.
+
+\subsection{Summary}
+
+With the \texttt{SIMPLE} protocol, the Bine tree is the better choice for small and medium messages (up to a few MB) from 8 ranks on, with speedups of $3.4\times$ to $6.5\times$ at 128 ranks, and its time scales logarithmically as designed.
+For large messages (64\,MB) the ring remains better or equal, and the reduce is the worse case.
+At $p=4$ the ring is always faster, but this configuration is entirely intra-node and is not representative of multi-node runs.
+This reference point motivates the bandwidth-optimal algorithms of the following chapters, and a selection rule based on message size and number of ranks.
+% TODO: add LL and LL128 results.

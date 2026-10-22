@@ -1,7 +1,404 @@
+% Requires: booktabs, amsmath, tikz (arrows.meta), subcaption
+% Macros assumed: \nccl \bine \bigO \rtn \ntr \nbr
 \chapter{Background and Related Work}\label{ch:background}
 
-\todo{Write last. Only what later chapters depend on.}
+This chapter introduces collective operations and the algorithms that the rest of the thesis builds on.
+It describes the ring and the standard binomial tree, which are the baselines of the thesis, and the Bine tree~\cite{desensi2025bine}, which is the algorithm implemented in \nccl{} in the following chapters.
+The notation introduced here is used throughout the thesis.
 
-\section{Collective communication}
-\section{Ring, tree and butterfly-style algorithms}
-\section{Related work}
+%==============================================================================
+\section{Collective communication}\label{sec:bg-collectives}
+
+A \emph{collective operation} is executed by all the $p$ processes (\emph{ranks}) of a communicator, each identified by a rank identifier $r\in[0,p-1]$.
+The operations considered in this thesis are the following.
+\begin{description}
+  \item[Broadcast.] The root $t$ holds a vector of $n$ bytes, and every rank must end up with a copy of it.
+  \item[Reduce.] Every rank holds a vector of $n$ bytes, and the root $t$ must obtain their element-wise combination (e.g., the sum).
+  \item[Scatter and gather.] In a scatter, the root holds $p$ blocks and rank $r$ must receive the $r$-th one. The gather is the opposite operation: the root collects one block from every rank.
+  \item[Allgather.] Every rank holds one block, and every rank must obtain the concatenation of all the blocks.
+  \item[Reduce-scatter.] Every rank holds a vector of $n$ bytes divided in $p$ blocks, and rank $r$ must obtain the $r$-th block of the element-wise combination of all the vectors.
+  \item[Allreduce.] Like the reduce, but every rank obtains the result.
+\end{description}
+The combination operator is assumed to be associative and commutative, as it is for the operators supported by \nccl{} (sum, product, maximum, minimum, average).
+Several collectives are related: the allreduce can be obtained as a reduce-scatter followed by an allgather, and the broadcast as a scatter followed by an allgather.
+
+\paragraph{Cost model.}
+To compare algorithms we use the usual latency--bandwidth model~\cite{hockney1994communication,thakur2005optimization}.
+Sending a message of $m$ bytes between two ranks takes $\alpha+m\beta$, where $\alpha$ is the latency and $\beta$ the time to transfer one byte, and combining $m$ bytes locally takes $m\gamma$.
+Algorithms proceed in \emph{steps}, and at each step a rank sends at most one message and receives at most one.
+The model ignores the topology of the network: all the pairs of ranks are assumed to be at the same distance.
+This is precisely the assumption that the Bine tree relaxes (Sec.~\ref{sec:bg-bine}).
+Table~\ref{tab:notation} summarizes the notation.
+
+\begin{table}[t]
+\centering
+\small
+\caption{Notation used in the thesis.}
+\label{tab:notation}
+\begin{tabular}{@{}ll@{}}
+\toprule
+Symbol & Definition \\
+\midrule
+$p$ & Number of ranks. \\
+$r$ & Rank identifier, $r\in[0,p-1]$. \\
+$t$ & Rank identifier of the root of the collective. \\
+$n$ & Size of the vector of the collective, in bytes. \\
+$s$ & Number of steps of a tree algorithm, $s=\log_2 p$ ($p$ a power of two). \\
+$\alpha,\beta,\gamma$ & Latency, time per byte transferred, time per byte reduced. \\
+$\oplus$ & Bitwise exclusive or (XOR). \\
+$\rtn(r)$ & Negabinary representation of the rank $r$ (Sec.~\ref{sec:bg-bine}). \\
+$\ntr(x)$ & Rank identifier whose negabinary representation is $x$. \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+%==============================================================================
+\section{Ring, tree and butterfly-style algorithms}\label{sec:bg-algorithms}
+
+Most collective algorithms are built from a small number of communication patterns.
+This section describes the three families relevant for this thesis, the ring, the binomial tree and the butterfly, and then the Bine variants of the tree and of the butterfly.
+Throughout, $p=2^s$ unless stated otherwise.
+
+%------------------------------------------------------------------------------
+\subsection{Ring}\label{sec:bg-ring}
+
+In a ring algorithm the ranks are arranged in a logical ring, and at every step rank $r$ sends to rank $(r+1)\bmod p$ and receives from rank $(r-1)\bmod p$ (Fig.~\ref{fig:bg-ring}).
+Each rank talks to only two peers, and all the ranks send and receive at every step.
+
+\begin{figure}[t]
+  \centering
+  \begin{tikzpicture}[
+      rank/.style={circle,draw,minimum size=6.5mm,inner sep=0pt,font=\small},
+      >={Stealth[length=2mm]}]
+    \foreach \r in {0,...,7}{
+      \node[rank] (r\r) at ({90-45*\r}:1.5) {\r};
+    }
+    \foreach \r/\q in {0/1,1/2,2/3,3/4,4/5,5/6,6/7,7/0}{
+      \draw[->,thick] (r\r) -- (r\q);
+    }
+  \end{tikzpicture}
+  \caption{Communication pattern of a ring over $p=8$ ranks. At every step, rank $r$ sends to rank $(r+1)\bmod p$.}
+  \label{fig:bg-ring}
+\end{figure}
+
+\paragraph{Allgather, reduce-scatter and allreduce.}
+In the ring allgather, the vector is divided in $p$ blocks of $n/p$ bytes.
+At the first step each rank sends its own block, and at each following step it forwards the block received at the previous one, so that after $p-1$ steps every rank has all the blocks.
+The reduce-scatter is the same pattern in which the block received at each step is combined with the local one before being forwarded.
+The allreduce is a reduce-scatter followed by an allgather.
+The costs are
+\begin{align}
+  T_{\text{allgather}} &= (p-1)\,\alpha + \tfrac{p-1}{p}\,n\beta,\\
+  T_{\text{reduce-scatter}} &= (p-1)\,\alpha + \tfrac{p-1}{p}\,n\beta + \tfrac{p-1}{p}\,n\gamma,\\
+  T_{\text{allreduce}} &= 2(p-1)\,\alpha + 2\tfrac{p-1}{p}\,n\beta + \tfrac{p-1}{p}\,n\gamma.
+\end{align}
+The bandwidth term is optimal: every rank sends and receives a number of bytes that does not grow with $p$ and that matches the lower bound for these collectives~\cite{patarasuk2009bandwidth,chan2007collective}.
+
+\paragraph{Broadcast and reduce.}
+The ring can also be used for the broadcast and the reduce by pipelining.
+The vector is split in $k$ chunks that travel along the ring starting from the root: after the first chunk has reached the last rank, a new chunk is delivered at every step.
+The broadcast takes $p+k-2$ steps of $n/k$ bytes each,
+\begin{equation}
+  T_{\text{broadcast}} = (p+k-2)\Bigl(\alpha+\tfrac{n}{k}\beta\Bigr),
+  \label{eq:bg-ring-bcast}
+\end{equation}
+and the reduce is the same pattern in the opposite direction, with an additional $\tfrac{n}{k}\gamma$ per step.
+For a large $k$ the bandwidth term tends to $n\beta$, independently of $p$, but the latency term grows linearly with the number of ranks, and chunks cannot be made arbitrarily small without paying $\alpha$ for each of them.
+
+\paragraph{Locality.}
+Since each rank communicates only with its two neighbours, a ring whose ranks are mapped consecutively on the machine uses very few long-distance links.
+For example, on a network organized in groups, only two of the $p$ messages sent at each step cross a group boundary for every boundary~\cite{desensi2025bine}.
+This is why the ring is competitive for large vectors even on oversubscribed networks.
+Its weakness is the number of steps: the performance is suboptimal for large numbers of ranks and small to medium vectors~\cite{desensi2025bine}, where the latency term $\bigO{p}\,\alpha$ dominates.
+
+%------------------------------------------------------------------------------
+\subsection{Binomial tree}\label{sec:bg-tree}
+
+Here, \emph{tree} always means the standard binomial tree, not the double binary tree used by \nccl{} (Sec.~\ref{sec:nccl-graph}).
+
+\paragraph{Construction.}
+A binomial tree of order $0$ is a single node.
+A binomial tree of order $k$ is obtained by linking two binomial trees of order $k-1$, making the root of one of them a child of the root of the other (Fig.~\ref{fig:bg-binomial}).
+A tree of order $s$ has $2^s$ nodes, depth $s$ and $2^s-1$ edges; the root has $s$ children, and the number of nodes at depth $d$ is the binomial coefficient $\binom{s}{d}$, which gives the tree its name.
+In a collective, each node of the tree is a rank and each edge is a communication between two ranks.
+The assignment of ranks to nodes is arbitrary, and any assignment gives a correct algorithm.
+For the collectives that include a computation (e.g., the reduce) this requires only that the operator is associative.
+
+\paragraph{Broadcast.}
+The root first sends the vector to one rank.
+Then, at each step, every rank that already holds the data sends it to a rank that does not, so that the number of ranks holding the data doubles at each step and the broadcast completes in $s=\log_2 p$ steps.
+The algorithm is correct for any choice of the destinations, as long as a rank never sends to a rank that already has the data, but different choices give different trees.
+The two standard ones differ in the distance between the ranks that communicate, where the distance between $r$ and $q$ is $|r-q|$.
+Let $r'=(r-t)\bmod p$ be the rank relative to the root $t$.
+\begin{itemize}
+  \item In the \emph{distance-doubling} tree, used for example by Open MPI~\cite{desensi2025bine}, at step $i$ rank $r'$ sends to $r'\oplus2^{i}$, so the distance doubles at every step: $1,2,4,\dots,p/2$. A rank $r'\neq0$ receives at the step given by the position of its most significant set bit.
+  \item In the \emph{distance-halving} tree, used for example by MPICH~\cite{desensi2025bine}, at step $i$ rank $r'$ sends to $r'\oplus2^{s-i-1}$, so the distance halves at every step: $p/2,\dots,2,1$. A rank $r'\neq0$ receives at the step $s-1-\nu$, where $\nu$ is the position of its least significant set bit.
+\end{itemize}
+Figure~\ref{fig:bg-binomial} shows the distance-halving tree for $p=8$ and $t=0$.
+Rank $0$ sends to $4$, $2$, $1$ at steps $0$, $1$, $2$; rank $4$ sends to $6$ and $5$ at steps $1$ and $2$; rank $2$ sends to $3$ at step $2$; and rank $6$ sends to $7$ at step $2$.
+The distance-halving tree is the one the thesis compares against, because it is the one that the Bine tree modifies.
+
+\begin{figure}[t]
+  \centering
+  \begin{tikzpicture}[
+      rank/.style={circle,draw,minimum size=6.5mm,inner sep=0pt,font=\small},
+      lbl/.style={midway,font=\scriptsize,fill=white,inner sep=1pt},
+      >={Stealth[length=2mm]}]
+    \node[rank] (n0) at (3.0, 0.0) {0};
+    \node[rank] (n1) at (0.5,-1.5) {1};
+    \node[rank] (n2) at (2.5,-1.5) {2};
+    \node[rank] (n4) at (5.5,-1.5) {4};
+    \node[rank] (n3) at (2.5,-3.0) {3};
+    \node[rank] (n5) at (4.5,-3.0) {5};
+    \node[rank] (n6) at (6.5,-3.0) {6};
+    \node[rank] (n7) at (6.5,-4.5) {7};
+    \draw[->] (n0) -- node[lbl]{$i{=}2$} (n1);
+    \draw[->] (n0) -- node[lbl]{$i{=}1$} (n2);
+    \draw[->] (n0) -- node[lbl]{$i{=}0$} (n4);
+    \draw[->] (n2) -- node[lbl]{$i{=}2$} (n3);
+    \draw[->] (n4) -- node[lbl]{$i{=}2$} (n5);
+    \draw[->] (n4) -- node[lbl]{$i{=}1$} (n6);
+    \draw[->] (n6) -- node[lbl]{$i{=}2$} (n7);
+  \end{tikzpicture}
+  \caption{Distance-halving binomial tree over $p=8$ ranks, rooted at rank $0$. Each edge is labeled with the step $i$ at which it is used in a broadcast.}
+  \label{fig:bg-binomial}
+\end{figure}
+
+\paragraph{Other collectives.}
+The reduce uses the same tree with the edges reversed: the leaves send first, and each rank combines the vectors received from its children with its own before sending to its parent.
+In the scatter the root sends to its child the part of the vector (the blocks) destined to the subtree of that child, and the same is repeated at each level; the gather is the opposite operation.
+In both, the amount of data per message halves (or doubles) at each step, so that the total volume handled by the root is $\tfrac{p-1}{p}n$.
+For a large vector, the broadcast can also be implemented as a scatter followed by an allgather~\cite{thakur2005optimization}.
+
+\paragraph{Cost.}
+In the broadcast and in the reduce, every edge carries the whole vector, so
+\begin{equation}
+  T_{\text{broadcast}} = s\,(\alpha+n\beta),\qquad
+  T_{\text{reduce}} = s\,(\alpha+n\beta+n\gamma),
+  \label{eq:bg-tree-cost}
+\end{equation}
+while the scatter and the gather take $s\,\alpha+\tfrac{p-1}{p}n\beta$.
+Table~\ref{tab:bg-cost} compares them with the ring.
+The tree has a logarithmic latency term, which makes it the better choice for small and medium vectors and large $p$.
+Its bandwidth term is $s\,n\beta$, i.e., it grows with $p$, while the one of the pipelined ring does not, so for large vectors the ring wins.
+The same trade-off appears in the measurements of Chapter~\ref{ch:tree}.
+
+\begin{table}[t]
+\centering
+\small
+\caption{Cost of the ring and of the binomial tree algorithms ($p=2^s$). The ring broadcast and reduce are pipelined with $k$ chunks (the reduce adds $\tfrac{n}{k}\gamma$ to each step). A dash means that the algorithm is not used for that collective.}
+\label{tab:bg-cost}
+\begin{tabular}{@{}lll@{}}
+\toprule
+Collective & Ring & Binomial tree \\
+\midrule
+Broadcast & $(p+k-2)(\alpha+\tfrac{n}{k}\beta)$ & $s\,(\alpha+n\beta)$ \\
+Reduce & $(p+k-2)(\alpha+\tfrac{n}{k}\beta+\tfrac{n}{k}\gamma)$ & $s\,(\alpha+n\beta+n\gamma)$ \\
+Scatter, gather & -- & $s\,\alpha+\tfrac{p-1}{p}n\beta$ \\
+Allgather & $(p-1)\alpha+\tfrac{p-1}{p}n\beta$ & -- \\
+Reduce-scatter & $(p-1)\alpha+\tfrac{p-1}{p}n\beta+\tfrac{p-1}{p}n\gamma$ & -- \\
+Allreduce & $2(p-1)\alpha+2\tfrac{p-1}{p}n\beta+\tfrac{p-1}{p}n\gamma$ & -- \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\paragraph{Number of ranks not a power of two.}
+Binomial trees can be adapted to any $p$ by running the algorithm on the $p'=2^{\lfloor\log_2p\rfloor}$ ranks and by adding a step in which the remaining ranks exchange data with ranks of the first group~\cite{desensi2025bine}.
+
+\paragraph{Communication locality.}
+The cost model of Table~\ref{tab:bg-cost} assumes that all pairs of ranks are equally distant, but on a real machine this is not true.
+The two trees above have the same number of steps and the same total volume of data, but they can generate a very different traffic on the slow links~\cite{desensi2025bine}.
+Consider a broadcast of $n$ bytes over eight nodes connected through a $2{:}1$ oversubscribed fat tree, where each leaf switch serves two consecutive ranks, i.e., $\{0,1\},\{2,3\},\{4,5\},\{6,7\}$, and the uplinks are the bottleneck.
+In the distance-doubling tree, the transfers at the second and third steps ($0\to2$ and $1\to3$; then $0\to4$, $1\to5$, $2\to6$, $3\to7$) all cross the uplinks, for a total of $2n+4n=6n$ bytes, and the two transfers of the second step even share the uplink of the first switch.
+In the distance-halving tree, only $0\to4$ ($n$ bytes) and $0\to2$, $4\to6$ ($2n$ bytes) cross the uplinks, for $3n$ bytes in total, and the last step, which is the one with the most transfers, is entirely local.
+The intuition is that closer communication should be preferred when more ranks are sending.
+This example also assumes that rank identifiers are close to the physical position of the ranks, which holds when the ranks are mapped consecutively on the machine (e.g., under the default block distribution of Slurm).
+
+%------------------------------------------------------------------------------
+\subsection{Butterfly}\label{sec:bg-butterfly}
+
+%------------------------------------------------------------------------------
+\subsection{Bine trees}\label{sec:bg-bine}
+
+\bine{} (\emph{binomial negabinary}) trees are a family of binomial-tree algorithms that reduce the distance between the ranks that communicate, and so the amount of data that crosses the slow links of the network~\cite{desensi2025bine}.
+They keep the generality of binomial trees: they have the same number of steps, the same number of messages and the same communication cost in the model of Sec.~\ref{sec:bg-collectives}, they do not need to know the topology or the way the ranks are allocated, and their schedule is computed from the rank identifiers alone, with the same simplicity.
+In this thesis we only use the distance-halving Bine tree, which we describe in this section; the distance-doubling variant belongs to the butterfly algorithms (Sec.~\ref{sec:bg-bine-butterfly}).
+
+\paragraph{Modular distance.}
+A standard binomial tree does not use the physical distance between nodes, which would tie the algorithm to a specific machine, but the difference between the rank identifiers.
+This approximates the physical distance when the ranks are mapped consecutively on the machine.
+If this is not the case, the ranks can be remapped to a block distribution when the communicator is created, e.g., by sorting them by hostname when hostnames are numbered consecutively across groups~\cite{desensi2025bine}.
+Bine trees use a similar approach, but with the \emph{modular distance}: the $p$ ranks are arranged on a circle $0,1,\dots,p-1$, and the distance between two ranks is the length of the shortest path on the circle,
+\begin{equation}
+  d(r,q)=\min\bigl((r-q)\bmod p,\ (q-r)\bmod p\bigr).
+\end{equation}
+The motivation is that, when a job spans several groups, ranks $0$, $1$ and $2$ may well belong to three different groups.
+The standard distance would consider $0$ and $2$ farther apart than $0$ and $1$, but both pairs communicate between groups, so they should be treated as equal, as the modular distance does for ranks $0$ and $p-1$ as well.
+Counterexamples exist in which the standard distance is more accurate, but for jobs spanning multiple groups, which is the common case, the modular distance is the better approximation~\cite{desensi2025bine}.
+
+\paragraph{Construction.}
+The Bine tree is built recursively, like the binomial tree, but the way the two subtrees are joined is chosen to minimize the modular distance between the two roots.
+A Bine tree of order $1$ (two nodes) is identical to a binomial tree.
+To build the tree of order $2$, an order-$1$ tree is connected to a copy of itself that is \emph{mirrored} (reflected on the vertical axis) and placed to its \emph{left}, rather than to the right as for a binomial tree.
+The roots are then at modular distance $1$ instead of $2$.
+The same rule gives the order-$3$ tree from two order-$2$ trees: placing the mirrored tree on the side that gives the shortest distance between the roots yields a distance of $3$, against $5$ for the other side and $4$ for the binomial tree.
+The ranks are numbered from the root from left to right, wrapping around when the rightmost node is reached, so that the ranks to the left of the root are those with the highest identifiers.
+Figure~\ref{fig:bg-bine-circle} compares the distance-halving binomial tree and the Bine tree for $p=8$.
+
+\begin{figure}[t]
+  \centering
+  \tikzset{
+    rank/.style={circle,draw,minimum size=6.5mm,inner sep=0pt,font=\small},
+    st0/.style={thick,-{Stealth[length=2mm]}},
+    st1/.style={thick,dashed,-{Stealth[length=2mm]}},
+    st2/.style={thick,dotted,-{Stealth[length=2mm]}},
+  }
+  \begin{subfigure}[t]{0.48\linewidth}
+    \centering
+    \begin{tikzpicture}[scale=0.95]
+      \foreach \r in {0,...,7}{ \node[rank] (b\r) at ({90-45*\r}:1.6) {\r}; }
+      \draw[st0] (b0) -- (b4);
+      \draw[st1] (b0) -- (b2);
+      \draw[st1] (b4) -- (b6);
+      \draw[st2] (b0) -- (b1);
+      \draw[st2] (b2) -- (b3);
+      \draw[st2] (b4) -- (b5);
+      \draw[st2] (b6) -- (b7);
+    \end{tikzpicture}
+    \caption{Binomial tree.}
+  \end{subfigure}\hfill
+  \begin{subfigure}[t]{0.48\linewidth}
+    \centering
+    \begin{tikzpicture}[scale=0.95]
+      \foreach \r in {0,...,7}{ \node[rank] (n\r) at ({90-45*\r}:1.6) {\r}; }
+      \draw[st0] (n0) -- (n3);
+      \draw[st1] (n0) -- (n7);
+      \draw[st1] (n3) -- (n4);
+      \draw[st2] (n0) -- (n1);
+      \draw[st2] (n3) -- (n2);
+      \draw[st2] (n7) -- (n6);
+      \draw[st2] (n4) -- (n5);
+    \end{tikzpicture}
+    \caption{Bine tree.}
+  \end{subfigure}
+  \caption{Distance-halving binomial tree and Bine tree over $p=8$ ranks, rooted at rank $0$, with the ranks placed on a circle. Solid, dashed and dotted arrows are the edges used at steps $0$, $1$ and $2$. The distances between the communicating ranks are $4,2,1$ for the binomial tree and $3,1,1$ for the Bine tree.}
+  \label{fig:bg-bine-circle}
+\end{figure}
+
+\paragraph{Negabinary representation.}
+The schedule is computed with the \emph{negabinary} (base $-2$) representation of the ranks, in which a number is written as a sum of powers of $-2$ instead of $2$.
+For example, $2=110_{-2}$, since $1\cdot(-2)^2+1\cdot(-2)^1+0\cdot(-2)^0=4-2=2$.
+Unlike the binary representation, the negabinary one represents positive and negative integers without a sign (e.g., $011_{-2}=-1$), so on a fixed number of bits not every string is a non-negative rank.
+With $s$ bits, the largest non-negative number $m$ that can be represented is obtained by setting to one all the even positions and to zero all the odd ones, since only even powers of $-2$ are positive; for $s=6$, $m=010101_{-2}=16+4+1=21$.
+The construction of the Bine tree places the rightmost rank at $m$.
+Consequently, the ranks $r\in[0,m]$ are represented by their own negabinary value, while a rank $r>m$ (on the left of the root) is represented by the negabinary value of $r-p$.
+For $p=8$ ($s=3$), $m=101_{-2}=5$, and rank $6$ is represented by $6-8=-2=010_{-2}$.
+We write $\rtn(r)$ for the representation of $r$ ($\rtn(r,p)$ if $p$ needs to be explicit) and $\ntr(x)$ for the inverse function; both can be computed efficiently with bit masking and one addition or subtraction~\cite{desensi2025bine}.
+Table~\ref{tab:bg-bine-p8} lists the representations for $p=8$.
+
+\begin{table}[t]
+\centering
+\small
+\caption{Negabinary representation $\nbr{r}=\rtn(r)$, run $u(r)$ and receive step $i_r$ for $p=8$ ($s=3$).}
+\label{tab:bg-bine-p8}
+\begin{tabular}{@{}l*{8}{c}@{}}
+\toprule
+$r$ & 0 & 1 & 2 & 3 & 4 & 5 & 6 & 7 \\
+\midrule
+$\nbr{r}$ & 000 & 001 & 110 & 111 & 100 & 101 & 010 & 011 \\
+$u(r)$ & -- & 1 & 1 & 3 & 2 & 1 & 1 & 2 \\
+$i_r$ & $-1$ & 2 & 2 & 0 & 1 & 2 & 2 & 1 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\paragraph{Communication partner.}
+Consider a broadcast with root $0$.
+At step $i\in[0,s-1]$ every rank that already holds the data sends it to the rank whose negabinary representation differs from its own in the $s-i$ least significant bits:
+\begin{equation}
+  \pi_i(r)=\ntr\!\bigl(\rtn(r)\oplus M_i\bigr),\qquad M_i=2^{s-i}-1,
+  \label{eq:partner}
+\end{equation}
+where $M_i$ is the mask with the $s-i$ least significant bits set to one.
+The root has the representation $0\cdots0$, so at step $i$ it sends to the rank represented by $M_i$, i.e., $1\cdots1$ on $s-i$ bits.
+For the other ranks, we need to know the step at which they join the tree.
+Let $u(r)$ be the number of consecutive least significant bits of $\rtn(r)$ that are equal to the least significant one (e.g., $u=3$ for $1000$, and $u=2$ for $1011$).
+A rank $r\neq0$ receives the data from its parent at step
+\begin{equation}
+  i_r=s-u(r),\qquad i_r\in[0,s-1],
+  \label{eq:recv-step}
+\end{equation}
+and forwards it at every step $i>i_r$ using Eq.~\eqref{eq:partner}.
+Its parent is $\pi_{i_r}(r)$.
+For $p=8$ (Table~\ref{tab:bg-bine-p8}), rank $3$ ($111$) receives at step $0$ from $\ntr(111\oplus111)=0$, and sends at step $1$ to $\ntr(111\oplus011)=\ntr(100)=4$ and at step $2$ to $\ntr(111\oplus001)=\ntr(110)=2$.
+The resulting edges are those of Fig.~\ref{fig:bg-bine-circle}.
+The implementation of this computation in \nccl{} is described in Sec.~\ref{sec:tree-impl}.
+
+\paragraph{Correctness.}
+The schedule above is a spanning tree.
+The path from the root to a rank $r$ is a sequence of steps $i_1<i_2<\dots<i_h$, and the representation $\rtn(r)$ is the XOR of the corresponding masks $M_{i_1}\oplus\dots\oplus M_{i_h}$.
+Any $s$-bit string can be written in exactly one way as the XOR of a subset of $\{1,\,11,\,111,\dots,\,1\cdots1\}$, since the masks are linearly independent over $\mathbb{F}_2$: each has a different most significant set bit.
+Hence every rank is reached through exactly one path.
+For example, in the tree of Fig.~\ref{fig:bg-bine-circle}, rank $4$ ($100$) is reached through the path $0\to3\to4$, corresponding to $000\oplus111\oplus011=100$.
+The same representation gives the descendants of a rank: all the descendants of a rank reached at step $i$ share its $i+1$ most significant bits, because the following steps only change the less significant ones.
+In the Bine ordering (i.e., read on the circle, wrapping around at $p$), the descendants of a rank are therefore contiguous, which is the property the scatter and the gather need to send a single range of blocks~\cite{desensi2025bine}.
+
+\paragraph{Arbitrary root.}
+For a root $t\neq0$, the schedule is obtained by rotating the one of root $0$: each rank identifier $r$ is replaced by $(r-t)\bmod p$.
+The rotation is a relabeling, so it does not change the structure of the tree or the distances between the communicating ranks (Sec.~\ref{sec:tree-root}).
+
+\paragraph{Distance reduction.}
+We now quantify the gain with respect to the standard distance-halving binomial tree.
+In the binomial tree, the two ranks that communicate at step $i$ differ in the bit in position $s-i-1$, so their distance is
+\begin{equation}
+  \delta_{\text{binomial}}(i)=2^{s-i-1}.
+\end{equation}
+In the Bine tree, their negabinary representations differ in the $s-i$ least significant bits, which are all $1$ for one rank and all $0$ for the other.
+Their distance is therefore
+\begin{equation}
+  \delta_{\text{bine}}(i)=\Bigl|\sum_{j=0}^{s-i-1}(-2)^j\Bigr|
+  =\Bigl|\frac{1-(-2)^{s-i}}{3}\Bigr|\approx\frac{2^{s-i}}{3}.
+\end{equation}
+Since for a binomial tree the maximum distance between two ranks is $p/2$, the distance coincides with the modular distance, and the two can be compared directly:
+\begin{equation}
+  \frac{\delta_{\text{bine}}(i)}{\delta_{\text{binomial}}(i)}
+  \approx\frac{2^{s-i}/3}{2^{s-i-1}}=\frac{2}{3}.
+  \label{eq:bg-distance-ratio}
+\end{equation}
+Communicating ranks are therefore at a modular distance about $33\%$ shorter, as shown in Table~\ref{tab:bg-distance}.
+The distances do not halve exactly at each step, but they differ by at most one from the ideal halving.
+
+\begin{table}[t]
+\centering
+\small
+\caption{Distance between the ranks communicating at a step with $k=s-i$ in a distance-halving binomial tree ($2^{k-1}$) and in a Bine tree ($\lvert(1-(-2)^k)/3\rvert$).}
+\label{tab:bg-distance}
+\begin{tabular}{@{}lcccccc@{}}
+\toprule
+$k=s-i$ & 1 & 2 & 3 & 4 & 5 & 6 \\
+\midrule
+Binomial tree & 1 & 2 & 4 & 8 & 16 & 32 \\
+Bine tree & 1 & 1 & 3 & 5 & 11 & 21 \\
+Ratio & 1.00 & 0.50 & 0.75 & 0.63 & 0.69 & 0.66 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\paragraph{Reduction of the global traffic.}
+The exact reduction in the traffic on the slow links depends on the topology and on how the ranks are allocated to the groups, so only an upper bound can be given.
+Consider a step $i$ and the worst case for the binomial tree, in which the size of a group equals $\delta_{\text{binomial}}(i)$, so that all the communications of that step cross the group boundaries.
+In the Bine tree only the fraction $\delta_{\text{bine}}(i)/\delta_{\text{binomial}}(i)=2/3$ of them does, so the global traffic is reduced by at most $33\%$ (Eq.~\eqref{eq:bg-distance-ratio}).
+The authors of~\cite{desensi2025bine} validated this bound on the allocations of real jobs, using one week of data from Leonardo (1,116 jobs) and two weeks from LUMI (1,914 jobs): no job exceeded the bound, the reduction increases with the number of nodes, since larger jobs span more groups, and in a few cases on fewer than $64$ nodes the Bine tree increases the traffic, because it minimizes the distance modulo $p$ rather than the actual one.
+In the same work, the Bine algorithms reduce the global-link traffic by up to $33\%$ and obtain speedups of up to $5\times$ over the state of the art on four supercomputers with different topologies.
+
+\paragraph{Number of ranks not a power of two.}
+For $p$ even, the construction can be used as is, but some ranks may be reached twice, which would break correctness (e.g., a contribution would be reduced twice).
+In that case, one of the two subtrees rooted at the rank that is reached twice is removed, namely the one reached later, which is always the smaller one.
+For $p$ odd the construction cannot be applied directly, since communications happen in pairs, and the techniques for binomial trees mentioned above must be used~\cite{desensi2025bine}.
+The implementation of this thesis is limited to powers of two (Chapter~\ref{ch:tree}).
+
+%------------------------------------------------------------------------------
+\subsection{Bine butterflies}\label{sec:bg-bine-butterfly}
+
+%==============================================================================
+\section{Related work}\label{sec:bg-related}

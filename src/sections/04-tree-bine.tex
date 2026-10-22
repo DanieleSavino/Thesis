@@ -6,13 +6,13 @@
 
 %==============================================================================
 \section{Ring versus tree: $\bigO{n}$ versus $\bigO{\log n}$}\label{sec:tree-motivation}
-% TODO
+% TODO: the cost models of the ring and of the tree are in Sec.~\ref{sec:bg-ring}, \ref{sec:bg-tree} and Table~\ref{tab:bg-cost}; only the NCCL-specific motivation is left here.
 
 %==============================================================================
 \section{Schedule construction}\label{sec:tree-impl}
 
 This section describes how the schedule of the Bine tree is computed and used in \nccl{}.
-The notation is the one of Chapter~\ref{ch:background}.
+The Bine tree, its negabinary representation and its properties are described in Sec.~\ref{sec:bg-bine}.
 The schedule is built for $p=2^s$ ranks and for root $0$, and is defined only for power-of-two numbers of ranks.
 Any other root is obtained by rotating the root-$0$ schedule (Sec.~\ref{sec:tree-root}).
 
@@ -33,21 +33,8 @@ void ncclGetBineTree(int nRanks, int steps,
 \end{verbatim}
 which writes two flat arrays of $p\cdot s$ integers (\texttt{sendTable} and \texttt{recvTable}), with $-1$ encoding $\none$, and asserts that $2^s=p$.
 
-The construction uses the following quantities, restated only to fix the names used in the code.
-\begin{itemize}
-  \item \emph{Mask.} For a step $i\in[0,s-1]$, $M_i=2^{s-i}-1$ has the $s-i$ least significant bits set (\texttt{(1 << (steps - step)) - 1}).
-  \item \emph{Partner.} With $\nbr{r}=\rtn(r)$, the partner of $r$ at step $i$ is
-  \begin{equation}
-    \pi_i(r) \;=\; \ntr\!\bigl(\nbr{r}\oplus M_i\bigr).
-    \label{eq:partner}
-  \end{equation}
-  \item \emph{Run and receive step.} Let $u(r)$ be the number of consecutive least significant bits of $\nbr{r}$ equal to its least significant bit (the \emph{run} of $r$, capped at $s$ bits; in the code, the bits are scanned from the least significant one until the first that differs). A non-root rank receives at step
-  \begin{equation}
-    i_r \;=\; s-u(r), \qquad i_r\in[0,s-1],
-    \label{eq:recv-step}
-  \end{equation}
-  and we set $i_0=-1$ for the root, which already holds the data before step $0$.
-\end{itemize}
+The construction uses the quantities defined in Sec.~\ref{sec:bg-bine}: the mask $M_i$ (\texttt{(1 << (steps - step)) - 1} in the code), the partner $\pi_i(r)$ (Eq.~\eqref{eq:partner}), and the run $u(r)$ and receive step $i_r$ (Eq.~\eqref{eq:recv-step}).
+In the code, $u(r)$ is computed by scanning the bits of $\rtn(r)$ from the least significant one until the first that differs, capped at $s$ bits, and for the root we set $i_0=-1$, since it already holds the data before step $0$.
 
 \subsection{Definition of the schedule}
 
@@ -77,18 +64,7 @@ The root has $\nbr{0}=0\cdots0$ and $i_0=-1$, so it sends at every step, to the 
 
 \subsection{Example: $p=8$}
 
-For $p=8$ ($s=3$) the masks are $M_0=111$, $M_1=011$, $M_2=001$, and the negabinary representations are
-\begin{center}
-\begin{tabular}{@{}l*{8}{c}@{}}
-\toprule
-$r$ & 0 & 1 & 2 & 3 & 4 & 5 & 6 & 7 \\
-\midrule
-$\nbr{r}$ & 000 & 001 & 110 & 111 & 100 & 101 & 010 & 011 \\
-$u(r)$ & -- & 1 & 1 & 3 & 2 & 1 & 1 & 2 \\
-$i_r$ & $-1$ & 2 & 2 & 0 & 1 & 2 & 2 & 1 \\
-\bottomrule
-\end{tabular}
-\end{center}
+For $p=8$ ($s=3$) the masks are $M_0=111$, $M_1=011$, $M_2=001$, and the representations $\nbr{r}$, the runs $u(r)$ and the receive steps $i_r$ are those of Table~\ref{tab:bg-bine-p8}.
 For instance, rank $3$ ($\nbr{3}=111$) receives at step $0$ from $\ntr(111\oplus111)=\ntr(000)=0$, and sends at step $1$ to $\ntr(111\oplus011)=\ntr(100)=4$ and at step $2$ to $\ntr(111\oplus001)=\ntr(110)=2$.
 The resulting edges are $0\to3$ at step $0$; $0\to7$ and $3\to4$ at step $1$; $0\to1$, $3\to2$, $7\to6$ and $4\to5$ at step $2$.
 The tables are (``--'' stands for $\none$):
@@ -340,7 +316,7 @@ Invariants (\ref{inv:once})--(\ref{inv:root}) are also satisfied by any binomial
 It is the defining equation of the partner, Eq.~\eqref{eq:partner}, rewritten as $\nbr{r}\oplus\nbr{\pi_i(r)}=M_i$, and it holds for the receive peer as well, since the parent of $r$ is $\pi_{i_r}(r)$ and XOR is symmetric.
 It is stated on the virtual ranks because the root-$t$ schedule is the root-$0$ schedule relabeled by the rotation.
 For given $r$ and $i$ it admits exactly one peer, because XOR with $M_i$ and $\ntr$ are bijections.
-Hence the tables coincide with those defined by Eq.~\eqref{eq:partner}, and they inherit the properties of the Bine tree proved in the Bine chapter, in particular the distance between communicating ranks.
+Hence the tables coincide with those defined by Eq.~\eqref{eq:partner}, and they inherit the properties of the Bine tree discussed in Sec.~\ref{sec:bg-bine}, in particular the distance between communicating ranks.
 
 \subsection{Scope and limits}
 
@@ -361,14 +337,14 @@ Each point is the mean time over 40 iterations, after 10 warmup iterations, and 
 Both axes of the figures are logarithmic.
 Since a node holds four GPUs, $p=4$ is entirely intra-node, and every larger $p$ also uses the inter-node network.
 
-\begin{figure}[t]
+\begin{figure}[H]
   \centering
   \includegraphics[width=\linewidth]{assets/plots/Bcast_SIMPLE_Ranks.png}
   \caption{Broadcast, \texttt{SIMPLE} protocol: mean time versus number of ranks, Bine against ring, for six message sizes.}
   \label{fig:tree-bcast}
 \end{figure}
 
-\begin{figure}[t]
+\begin{figure}[H]
   \centering
   \includegraphics[width=\linewidth]{assets/plots/Reduce_SIMPLE_Ranks.png}
   \caption{Reduce, \texttt{SIMPLE} protocol: mean time versus number of ranks, Bine against ring, for six message sizes.}

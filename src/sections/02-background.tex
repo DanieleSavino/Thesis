@@ -92,7 +92,7 @@ The costs are
   T_{\text{reduce-scatter}} &= (p-1)\,\alpha + \tfrac{p-1}{p}\,n\beta + \tfrac{p-1}{p}\,n\gamma,\\
   T_{\text{allreduce}} &= 2(p-1)\,\alpha + 2\tfrac{p-1}{p}\,n\beta + \tfrac{p-1}{p}\,n\gamma.
 \end{align}
-The bandwidth term is optimal: every rank sends and receives a number of bytes that does not grow with $p$ and that matches the lower bound for these collectives~\cite{patarasuk2009bandwidth,chan2007collective}.
+The bandwidth term is optimal: every rank sends and receives a number of bytes that does not grow with $p$ and that matches the lower bound for these collectives.
 
 \paragraph{Broadcast and reduce.}
 The ring can also be used for the broadcast and the reduce by pipelining.
@@ -334,15 +334,6 @@ For $p=8$ (Table~\ref{tab:bg-bine-p8}), rank $3$ ($111$) receives at step $0$ fr
 The resulting edges are those of Fig.~\ref{fig:bg-bine-circle}.
 The implementation of this computation in \nccl{} is described in Sec.~\ref{sec:tree-impl}.
 
-\paragraph{Correctness.}
-The schedule above is a spanning tree.
-The path from the root to a rank $r$ is a sequence of steps $i_1<i_2<\dots<i_h$, and the representation $\rtn(r)$ is the XOR of the corresponding masks $M_{i_1}\oplus\dots\oplus M_{i_h}$.
-Any $s$-bit string can be written in exactly one way as the XOR of a subset of $\{1,\,11,\,111,\dots,\,1\cdots1\}$, since the masks are linearly independent over $\mathbb{F}_2$: each has a different most significant set bit.
-Hence every rank is reached through exactly one path.
-For example, in the tree of Fig.~\ref{fig:bg-bine-circle}, rank $4$ ($100$) is reached through the path $0\to3\to4$, corresponding to $000\oplus111\oplus011=100$.
-The same representation gives the descendants of a rank: all the descendants of a rank reached at step $i$ share its $i+1$ most significant bits, because the following steps only change the less significant ones.
-In the Bine ordering (i.e., read on the circle, wrapping around at $p$), the descendants of a rank are therefore contiguous, which is the property the scatter and the gather need to send a single range of blocks~\cite{desensi2025bine}.
-
 \paragraph{Arbitrary root.}
 For a root $t\neq0$, the schedule is obtained by rotating the one of root $0$: each rank identifier $r$ is replaced by $(r-t)\bmod p$.
 The rotation is a relabeling, so it does not change the structure of the tree or the distances between the communicating ranks (Sec.~\ref{sec:tree-root}).
@@ -384,13 +375,6 @@ Ratio & 1.00 & 0.50 & 0.75 & 0.63 & 0.69 & 0.66 \\
 \end{tabular}
 \end{table}
 
-\paragraph{Reduction of the global traffic.}
-The exact reduction in the traffic on the slow links depends on the topology and on how the ranks are allocated to the groups, so only an upper bound can be given.
-Consider a step $i$ and the worst case for the binomial tree, in which the size of a group equals $\delta_{\text{binomial}}(i)$, so that all the communications of that step cross the group boundaries.
-In the Bine tree only the fraction $\delta_{\text{bine}}(i)/\delta_{\text{binomial}}(i)=2/3$ of them does, so the global traffic is reduced by at most $33\%$ (Eq.~\eqref{eq:bg-distance-ratio}).
-The authors of~\cite{desensi2025bine} validated this bound on the allocations of real jobs, using one week of data from Leonardo (1,116 jobs) and two weeks from LUMI (1,914 jobs): no job exceeded the bound, the reduction increases with the number of nodes, since larger jobs span more groups, and in a few cases on fewer than $64$ nodes the Bine tree increases the traffic, because it minimizes the distance modulo $p$ rather than the actual one.
-In the same work, the Bine algorithms reduce the global-link traffic by up to $33\%$ and obtain speedups of up to $5\times$ over the state of the art on four supercomputers with different topologies.
-
 \paragraph{Number of ranks not a power of two.}
 For $p$ even, the construction can be used as is, but some ranks may be reached twice, which would break correctness (e.g., a contribution would be reduced twice).
 In that case, one of the two subtrees rooted at the rank that is reached twice is removed, namely the one reached later, which is always the smaller one.
@@ -399,6 +383,4 @@ The implementation of this thesis is limited to powers of two (Chapter~\ref{ch:t
 
 %------------------------------------------------------------------------------
 \subsection{Bine butterflies}\label{sec:bg-bine-butterfly}
-
-%==============================================================================
-\section{Related work}\label{sec:bg-related}
+\todo{Afer Butterfly implementation (ch. 05)}

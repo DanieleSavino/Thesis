@@ -325,74 +325,117 @@ Beyond this range, correctness relies on the arguments of this section, not on t
 The test of (\ref{inv:xor}) uses the same conversion $\rtn$ as the generator, so it checks that the tables realize the defining equation; the independent check of the construction as a whole comes from the structural invariants (\ref{inv:once})--(\ref{inv:root}).
 
 %==============================================================================
-%==============================================================================
 \section{Experimental results}\label{sec:tree-results}
 
 % Requires: graphicx
-This section compares the Bine broadcast and reduce of Sec.~\ref{sec:tree-collectives} with the native \nccl{} ring
+This section compares the Bine broadcast and reduce of Sec.~\ref{sec:tree-collectives} with the native \nccl{} ring (Chapter~\ref{ch:nccl}), under the \texttt{SIMPLE} and \texttt{LL} protocols.
+
 \paragraph{Setup.}
-Experiments run on the MeluXina supercomputer (see the acknowledgments), on GPU nodes with four NVIDIA A100 GPUs each, connected by NVLink within the node.
-We use $p\in\{4,8,16,32,64,128\}$ ranks, i.e., from one to 32 nodes with one rank per GPU, message sizes from 1\,kB to 64\,MB, and root $0$.
-Each point is the mean time over 40 iterations, after 10 warmup iterations, and the experiments were repeated several times with consistent results.
+Experiments run on the MeluXina supercomputer (see the acknowledgments), on nodes with four NVIDIA A100 GPUs connected by NVLink.
+We use $p\in\{4,8,16,32,64,128\}$ ranks (one to 32 nodes, one rank per GPU), message sizes from 1\,kB to 64\,MB, and root $0$.
+Each point is the mean over 40 iterations after 10 warmup iterations, repeated several times with consistent results; each protocol is measured separately.
 Both axes of the figures are logarithmic.
 Since a node holds four GPUs, $p=4$ is entirely intra-node, and every larger $p$ also uses the inter-node network.
+\texttt{LL128} is not measured: it relies on $128$-byte stores being delivered atomically and in order, which is only guaranteed between NVLink-connected GPUs (Sec.~\ref{sec:nccl-protocols}), so on this system it could only be used at $p=4$, a single node, and would not give a comparison across scales.
 
 \begin{figure}[H]
   \centering
   \includegraphics[width=\linewidth]{assets/plots/Bcast_SIMPLE_Ranks.png}
-  \caption{Broadcast, \texttt{SIMPLE} protocol: mean time versus number of ranks, Bine against ring, for six message sizes.}
+  \caption{Broadcast: mean time versus number of ranks, Bine (orange) against ring (blue), for six message sizes. Solid lines with filled markers: \texttt{SIMPLE} protocol; dashed lines with hollow markers: \texttt{LL} protocol.}
   \label{fig:tree-bcast}
 \end{figure}
 
 \begin{figure}[H]
   \centering
   \includegraphics[width=\linewidth]{assets/plots/Reduce_SIMPLE_Ranks.png}
-  \caption{Reduce, \texttt{SIMPLE} protocol: mean time versus number of ranks, Bine against ring, for six message sizes.}
+  \caption{Reduce: mean time versus number of ranks, Bine (orange) against ring (blue), for six message sizes. Solid lines with filled markers: \texttt{SIMPLE} protocol; dashed lines with hollow markers: \texttt{LL} protocol.}
   \label{fig:tree-reduce}
 \end{figure}
 
-\subsection{Broadcast}
+\subsection{\texttt{SIMPLE} protocol}
 
-Figure~\ref{fig:tree-bcast} shows the expected separation between $\bigO{n}$ and $\bigO{\log n}$ (Sec.~\ref{sec:tree-motivation}).
-For messages up to 4\,MB, the ring time grows almost linearly with $p$ (about $2\times$ per doubling of the ranks at large $p$), while the Bine time grows by a roughly constant increment per doubling, i.e., logarithmically.
-At $p=128$ Bine is about $5.9\times$ faster at 1\,kB, $6.5\times$ at 16\,kB, $5.5\times$ at 256\,kB, $4.8\times$ at 1\,MB and $6\times$ at 4\,MB.
+The solid lines of Figures~\ref{fig:tree-bcast} and~\ref{fig:tree-reduce} show the expected separation between $\bigO{n}$ and $\bigO{\log n}$ (Sec.~\ref{sec:tree-motivation}).
+Up to 4\,MB the ring time grows almost linearly with $p$ (about $2\times$ per doubling), while the Bine time grows by a roughly constant increment per doubling.
+At $p=128$ Bine is faster by $5.9\times$, $6.5\times$, $5.5\times$, $4.8\times$ and $6\times$ at 1\,kB, 16\,kB, 256\,kB, 1\,MB and 4\,MB in the broadcast, and by $5.3\times$, $5.7\times$, $4.9\times$ and $3.4$--$3.5\times$ at 1\,kB to 1\,MB and 4\,MB in the reduce.
 
-At $p=4$ the ring is faster for all sizes (by $20$--$30\%$ up to 4\,MB), and the crossover is between 4 and 8 ranks.
-Two effects coincide here.
-With so few ranks the tree has few steps to save, and $p=4$ is also the only configuration that stays on NVLink, while from $p=8$ on the inter-node network is involved.
-The measurements do not separate the two.
+At 64\,MB the operation is bandwidth-bound: every edge of the tree carries the whole buffer and the root forwards it $s$ times, whereas the pipelined ring moves each chunk once per link.
+Bine is therefore slower than the ring in the broadcast for $p\le64$ ($2\times$ at $p=4$, $1.2$--$1.5\times$ for $p=8$ to $64$) and on par at $p=128$.
+In the reduce it is slower at every scale ($1.8$--$3.4\times$), since the root also reduces $s$ full buffers in sequence while the ring spreads the reduction over all ranks.
+Both algorithms jump sharply between $p=4$ and $p=8$, the cost of leaving NVLink for the network.
 
-The 64\,MB case is different.
-Bine is slower than the ring for $p\le64$ (about $2\times$ at $p=4$, $1.5\times$ at $p=8$, and $1.2$--$1.3\times$ from $p=16$ to $64$), and the two are on par at $p=128$.
-Both algorithms jump sharply between $p=4$ and $p=8$ (about $5\times$ for the ring and $3.8\times$ for Bine), which is the cost of leaving NVLink for the network.
-For large messages the broadcast is bandwidth-bound: every edge of the tree carries the whole buffer, and the root forwards it $s$ times, whereas the pipelined ring moves each chunk once per link.
-The ring therefore pays a latency term that grows with $p$ but a small bandwidth term, and Bine does the opposite.
-This is consistent with the measurements, and suggests that the tree wins only when the latency term of the ring dominates.
-Part of the ring's advantage at 64\,MB is also a property of the network bandwidth rather than of the algorithm alone.
-
-\subsection{Reduce}
-
-The reduce (Figure~\ref{fig:tree-reduce}) behaves like the broadcast for small and medium messages.
-At $p=128$ Bine is about $5.3\times$ faster at 1\,kB, $5.7\times$ at 16\,kB, $4.9\times$ at 256\,kB, and $3.4$--$3.5\times$ at 1\,MB and 4\,MB.
-At $p=4$ the ring is again faster, and at $p=8$ the two are within a few percent for sizes up to 4\,MB: they coincide at 1\,kB, Bine is slightly ahead from 16\,kB to 1\,MB, and the ring is marginally ahead at 4\,MB.
-The advantage of Bine at large $p$ is smaller than for the broadcast at 1\,MB and 4\,MB.
-
-The 1\,MB curve of Bine has a feature that is not present in the other sizes.
-Its time is almost flat between $p=32$ and $p=64$ (about $580$ and $620\,\mu$s), and then rises by about $60\%$ at $p=128$.
-As a result, the speedup over the ring grows from about $1.5\times$ at $p=32$ to $2.8\times$ at $p=64$, and then to $3.4\times$ at $p=128$.
-This behavior was reproduced across repeated runs, so it is a property of the system and not measurement noise.
+The Bine reduce at 1\,MB has a feature absent at other sizes: its time is almost flat between $p=32$ and $p=64$ (about $580$ and $620\,\mu$s) and then rises by $60\%$ at $p=128$, so the speedup over the ring goes from $1.5\times$ to $2.8\times$ to $3.4\times$.
+It was reproduced across runs, so it is not noise.
 % TODO: cause not isolated yet; candidates are the mapping of ranks to nodes/switches at 128 ranks, or a change in chunking or protocol parameters selected at this size. Verify with profiling or with a different node allocation before stating one.
 We have not isolated its cause.
 
-For 64\,MB, Bine is slower than the ring at every scale: about $3.4\times$ at $p=4$, between $2.1\times$ and $2.4\times$ for $p=8$ to $64$, and still about $1.8\times$ at $p=128$, with no crossover in the measured range.
-As in the broadcast, both algorithms jump between $p=4$ and $p=8$ (about $5\times$ for the ring).
-Unlike the broadcast, a rank with several children must receive and reduce the whole buffer once per child (Sec.~\ref{sec:tree-collectives}), so the root performs $s$ full-size reductions in sequence, while the ring spreads the reduction over all ranks.
-This penalizes the tree more in the reduce than in the broadcast.
+\subsection{\texttt{LL} protocol}\label{sec:tree-ll}
+
+\texttt{LL} trades bandwidth for latency (Sec.~\ref{sec:nccl-protocols}): half of the bytes it moves are flags.
+The dashed lines of Figures~\ref{fig:tree-bcast} and~\ref{fig:tree-reduce} show that it helps both algorithms at small sizes, but degrades Bine much earlier and much more than the ring.
+
+\paragraph{Small messages.}
+Up to 16\,kB the picture is that of \texttt{SIMPLE} at lower absolute times.
+At $p=128$ Bine is $4.4\times$ (broadcast) and $3.1\times$ (reduce) faster than the ring at 1\,kB and $4.9\times$ at 16\,kB, and Bine itself is $2.6\times$ and $1.4\times$ faster than with \texttt{SIMPLE} (broadcast).
+At small $p$ the ring is still better: at $p=4$ for all sizes, and at $p=8$ at 16\,kB (by $37\%$ in the broadcast and $27\%$ in the reduce).
+
+\paragraph{Large messages.}
+Above 16\,kB Bine scales worse than the ring.
+At 64\,MB the ring is almost flat in $p$ (from 15.3 to 17.1\,ms in the broadcast between $p=8$ and $128$, about 4\,GB/s), while Bine grows from 69.6 to 367.7\,ms (from about 1.0 to 0.18\,GB/s), becoming $21.5\times$ slower in the broadcast and about $18\times$ in the reduce at $p=128$.
+This is expected.
+\texttt{LL} sustains a much lower bandwidth than \texttt{SIMPLE}, and the ring is the more bandwidth-efficient algorithm: each byte crosses each link once, while in the tree the root and the internal ranks send the buffer up to $s$ times, so the algorithm that moves more data pays more for the lower bandwidth.
+For $p\ge8$ and 64\,MB the ring is slowed down by \texttt{LL} by $1.8$--$6.3\times$ with respect to \texttt{SIMPLE}, but Bine by $15$--$41\times$.
+In addition, an intermediate rank of the ring uses the fused \texttt{directRecvCopyDirectSend} (Sec.~\ref{sec:nccl-primitives}): it receives and forwards the same data in a single pass, so every rank receives and sends at the same time and a chunk streams through the ring. In Bine, instead, a rank either receives or sends at each step (fans $\langle1,0\rangle$ and $\langle0,1\rangle$, Sec.~\ref{sec:tree-collectives}), with separate operations, so each hop of the tree is store-and-forward at the granularity of a chunk and no rank uses its receive and send directions simultaneously.
+The slowdown follows the number of steps: at $p=4$ it is $2.1\times$ in the broadcast, about $s=2$, and it grows with $p$.
+% TODO: beyond one node the slowdown (21.5x at p=128, s=7) exceeds s by about 3x. Candidates not yet isolated: per-chunk, per-step construction of a Primitives object in the chunk-outer loop of runBine, the larger number of distinct peers, hence connections, per channel (Sec.~\ref{sec:nccl-channels}), served by the proxy on the network (Sec.~\ref{sec:nccl-proxy}), and the number of channels used by Bine. Verify with profiling before stating one.
+
+\paragraph{Crossover between \texttt{LL} and \texttt{SIMPLE}.}
+As a consequence, \texttt{SIMPLE} overtakes \texttt{LL} much earlier for Bine than for the ring (Table~\ref{tab:tree-ll-cross}): between 16 and 256\,kB for every $p\ge8$ for Bine, against between 256\,kB and 1\,MB at $p=8$ and between 4 and 64\,MB for $p\ge32$ for the ring.
+The two collectives have the same crossover sizes.
+
+\begin{table}[t]
+\centering
+\small
+\caption{Largest measured message size for which \texttt{LL} is faster than \texttt{SIMPLE}; the crossover lies between this size and the next measured one (1\,kB, 16\,kB, 256\,kB, 1\,MB, 4\,MB, 64\,MB). The entries are the same for broadcast and reduce.}
+\label{tab:tree-ll-cross}
+\begin{tabular}{@{}l cccccc@{}}
+\toprule
+ & $p=4$ & $8$ & $16$ & $32$ & $64$ & $128$ \\
+\midrule
+Bine & 1\,MB & 16\,kB  & 16\,kB & 16\,kB & 16\,kB & 16\,kB \\
+Ring & 4\,MB & 256\,kB & 1\,MB  & 4\,MB  & 4\,MB  & 4\,MB  \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\paragraph{Effect on the speedup.}
+If each algorithm uses its best protocol (Table~\ref{tab:tree-best}), the advantage of Bine at medium sizes is much smaller than with \texttt{SIMPLE} alone, because the ring can use \texttt{LL} up to 4\,MB at $p=128$ and Bine cannot: at 1--4\,MB it drops from $3.4$--$6\times$ to $1.1$--$1.7\times$.
+At $p=8$ the ring with \texttt{LL} is faster or on par up to 256\,kB, by up to $37\%$ in the broadcast and $27\%$ in the reduce, and Bine keeps a small advantage only at 1\,MB and, in the broadcast, at 4\,MB.
+At 64\,MB the best protocol is \texttt{SIMPLE} for both, so nothing changes.
+
+\begin{table}[t]
+\centering
+\small
+\caption{Best protocol of each algorithm and speedup of Bine over the ring, both with their best protocol, at $p=128$. A value below $1$ means that the ring is faster.}
+\label{tab:tree-best}
+\begin{tabular}{@{}r ccc @{\qquad} ccc@{}}
+\toprule
+ & \multicolumn{3}{c}{Broadcast} & \multicolumn{3}{c}{Reduce} \\
+\cmidrule(lr){2-4}\cmidrule(l){5-7}
+Size & Bine & Ring & Speedup & Bine & Ring & Speedup \\
+\midrule
+1\,kB   & \texttt{LL}     & \texttt{LL}     & $4.4\times$ & \texttt{LL}     & \texttt{LL}     & $3.1\times$ \\
+16\,kB  & \texttt{LL}     & \texttt{LL}     & $4.9\times$ & \texttt{LL}     & \texttt{LL}     & $4.9\times$ \\
+256\,kB & \texttt{SIMPLE} & \texttt{LL}     & $2.3\times$ & \texttt{SIMPLE} & \texttt{LL}     & $2.2\times$ \\
+1\,MB   & \texttt{SIMPLE} & \texttt{LL}     & $1.4\times$ & \texttt{SIMPLE} & \texttt{LL}     & $1.1\times$ \\
+4\,MB   & \texttt{SIMPLE} & \texttt{LL}     & $1.7\times$ & \texttt{SIMPLE} & \texttt{LL}     & $1.3\times$ \\
+64\,MB  & \texttt{SIMPLE} & \texttt{SIMPLE} & $1.0\times$ & \texttt{SIMPLE} & \texttt{SIMPLE} & $0.54\times$ \\
+\bottomrule
+\end{tabular}
+\end{table}
 
 \subsection{Summary}
 
-With the \texttt{SIMPLE} protocol, the Bine tree is the better choice for small and medium messages (up to a few MB) from 8 ranks on, with speedups of $3.4\times$ to $6.5\times$ at 128 ranks, and its time scales logarithmically as designed.
-For large messages (64\,MB) the ring remains better or equal, and the reduce is the worse case.
-At $p=4$ the ring is always faster, but this configuration is entirely intra-node and is not representative of multi-node runs.
-This reference point motivates the bandwidth-optimal algorithms of the following chapters, and a selection rule based on message size and number of ranks.
-% TODO: add LL and LL128 results.
+With \texttt{SIMPLE}, Bine is the better choice for small and medium messages (up to a few MB) from 8 ranks on, with speedups of $3.4$--$6.5\times$ at 128 ranks and logarithmic scaling, while for 64\,MB the ring is better or equal, the reduce being the worse case; at $p=4$ the ring always wins, but this configuration is entirely intra-node and not representative.
+\texttt{LL} helps Bine only up to 16\,kB, where it is up to $4.9\times$ faster than the ring at 128 ranks.
+Above that the ring, being more bandwidth-efficient, keeps benefiting from \texttt{LL} up to 4\,MB while Bine must switch to \texttt{SIMPLE}, so with each algorithm at its best protocol the advantage at 1--4\,MB falls to $1.1$--$1.7\times$, and at $p=8$ it vanishes below 1\,MB.
+This motivates the bandwidth-optimal algorithms of the following chapters, and a selection rule based on message size, number of ranks and protocol, not on the algorithm alone.

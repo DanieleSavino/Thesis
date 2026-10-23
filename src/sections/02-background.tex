@@ -1,5 +1,4 @@
 % Requires: booktabs, amsmath, tikz (arrows.meta), subcaption
-% Macros assumed: \nccl \bine \bigO \rtn \ntr \nbr
 \chapter{Background and Related Work}\label{ch:background}
 
 This chapter introduces collective operations and the algorithms that the rest of the thesis builds on.
@@ -215,7 +214,7 @@ The intuition is that closer communication should be preferred when more ranks a
 This example also assumes that rank identifiers are close to the physical position of the ranks, which holds when the ranks are mapped consecutively on the machine (e.g., under the default block distribution of Slurm).
 
 %------------------------------------------------------------------------------
-\subsection{Ring versus tree: $\bigO{n}$ versus $\bigO{\log n}$}\label{sec:bg-ring-vs-tree}
+\subsection{Ring versus tree: $\bigO{p}$ versus $\bigO{\log p}$}\label{sec:bg-ring-vs-tree}
 
 For the broadcast and the reduce, the two baselines of the thesis differ in the term that grows with the number of ranks (Table~\ref{tab:bg-cost}).
 The pipelined ring has a bandwidth term that does not depend on $p$ but a latency term linear in $p$, since the first chunk needs $p-1$ steps to reach the last rank.

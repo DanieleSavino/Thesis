@@ -354,9 +354,12 @@ Since a node holds four GPUs, $p=4$ is entirely intra-node, and every larger $p$
 
 \subsection{\texttt{SIMPLE} protocol}
 
-The solid lines of Figures~\ref{fig:tree-bcast} and~\ref{fig:tree-reduce} show the expected separation between $\bigO{n}$ and $\bigO{\log n}$ (Sec.~\ref{sec:tree-motivation}).
+The solid lines of Figures~\ref{fig:tree-bcast} and~\ref{fig:tree-reduce} show the expected separation between $\bigO{n}$ and $\bigO{\log n}$ (Sec.~\ref{sec:bg-ring-vs-tree}).
 Up to 4\,MB the ring time grows almost linearly with $p$ (about $2\times$ per doubling), while the Bine time grows by a roughly constant increment per doubling.
 At $p=128$ Bine is faster by $5.9\times$, $6.5\times$, $5.5\times$, $4.8\times$ and $6\times$ at 1\,kB, 16\,kB, 256\,kB, 1\,MB and 4\,MB in the broadcast, and by $5.3\times$, $5.7\times$, $4.9\times$ and $3.4$--$3.5\times$ at 1\,kB to 1\,MB and 4\,MB in the reduce.
+At $p=4$ the ring is faster for all sizes, and the crossover lies between 4 and 8 ranks: with so few ranks the tree has few steps to save, and $p=4$ is also the only configuration that stays on NVLink.
+The measurements do not separate the two effects.
+At $p=8$ the two algorithms are within a few percent in the reduce up to 4\,MB.
 
 At 64\,MB the operation is bandwidth-bound: every edge of the tree carries the whole buffer and the root forwards it $s$ times, whereas the pipelined ring moves each chunk once per link.
 Bine is therefore slower than the ring in the broadcast for $p\le64$ ($2\times$ at $p=4$, $1.2$--$1.5\times$ for $p=8$ to $64$) and on par at $p=128$.

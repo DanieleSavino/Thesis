@@ -65,7 +65,7 @@ Throughout, $p=2^s$ unless stated otherwise.
 In a ring algorithm the ranks are arranged in a logical ring, and at every step rank $r$ sends to rank $(r+1)\bmod p$ and receives from rank $(r-1)\bmod p$ (Fig.~\ref{fig:bg-ring}).
 Each rank talks to only two peers, and all the ranks send and receive at every step.
 
-\begin{figure}[t]
+\begin{figure}[H]
   \centering
   \begin{tikzpicture}[
       rank/.style={circle,draw,minimum size=6.5mm,inner sep=0pt,font=\small},
@@ -213,6 +213,53 @@ In the distance-doubling tree, the transfers at the second and third steps ($0\t
 In the distance-halving tree, only $0\to4$ ($n$ bytes) and $0\to2$, $4\to6$ ($2n$ bytes) cross the uplinks, for $3n$ bytes in total, and the last step, which is the one with the most transfers, is entirely local.
 The intuition is that closer communication should be preferred when more ranks are sending.
 This example also assumes that rank identifiers are close to the physical position of the ranks, which holds when the ranks are mapped consecutively on the machine (e.g., under the default block distribution of Slurm).
+
+%------------------------------------------------------------------------------
+\subsection{Ring versus tree: $\bigO{n}$ versus $\bigO{\log n}$}\label{sec:bg-ring-vs-tree}
+
+For the broadcast and the reduce, the two baselines of the thesis differ in the term that grows with the number of ranks (Table~\ref{tab:bg-cost}).
+The pipelined ring has a bandwidth term that does not depend on $p$ but a latency term linear in $p$, since the first chunk needs $p-1$ steps to reach the last rank.
+The tree has a latency term logarithmic in $p$, but every edge carries the whole vector, so its bandwidth term grows as $s\,n\beta$.
+
+The ring cost of Eq.~\eqref{eq:bg-ring-bcast} depends on the number of chunks $k$.
+Minimizing it over $k$ gives $k^\ast=\sqrt{(p-2)\,n\beta/\alpha}$ and
+\begin{equation}
+  T_{\text{ring}}^{\ast}=\Bigl(\sqrt{(p-2)\,\alpha}+\sqrt{n\beta}\Bigr)^{2}
+  =(p-2)\,\alpha+n\beta+2\sqrt{(p-2)\,\alpha\,n\beta},
+  \label{eq:bg-ring-opt}
+\end{equation}
+valid when $k^\ast\ge1$; otherwise the best choice is $k=1$ and the ring takes $(p-1)(\alpha+n\beta)$~\cite{casanova2008parallel}.  The same square-root form is obtained for the pipelined broadcast of other topologies, e.g., $\bigl(\sqrt{(\lceil\log_2p\rceil-1)\alpha}+\sqrt{n\beta}\bigr)^2$ for the optimal algorithm of~\cite{traff2005optimal}.
+This is to be compared with $T_{\text{tree}}=s(\alpha+n\beta)$ of Eq.~\eqref{eq:bg-tree-cost}.
+For the reduce, the same holds with $\beta$ replaced by $\beta+\gamma$.
+Two regimes follow.
+\begin{itemize}
+  \item \emph{Small vectors} ($n\beta\ll\alpha$). The ring is latency-bound and costs about $(p-1)\alpha$, against $s\,\alpha$ for the tree: the tree is faster by a factor $(p-1)/\log_2 p$, that is $\bigO{p}$ versus $\bigO{\log p}$ steps.
+  \item \emph{Large vectors} ($n\beta\gg(p-2)\alpha$). The ring tends to $n\beta$, independently of $p$, while the tree costs $s\,n\beta$: the ring is faster by a factor $\log_2 p$.
+\end{itemize}
+The crossover is at $n^\ast=x^\ast\,\alpha/\beta$, where $x^\ast$ solves $s(1+x)=(p-2)+x+2\sqrt{(p-2)x}$ and $\alpha/\beta$ is the bandwidth-delay product of a link.
+Table~\ref{tab:bg-ring-vs-tree} gives $x^\ast$ and the two factors.
+The crossover moves to larger vectors as $p$ grows, so the larger the job, the larger the range of sizes in which the tree is preferable.
+
+\begin{table}[t]
+\centering
+\small
+\caption{Ring versus binomial tree in the model of Sec.~\ref{sec:bg-collectives} ($p=2^s$, ring with the optimal number of chunks). Small $n$: time of the ring over time of the tree, $(p-1)/s$. Large $n$: time of the tree over time of the ring, $s$. $x^\ast=n^\ast\beta/\alpha$ is the crossover vector size in units of $\alpha/\beta$.}
+\label{tab:bg-ring-vs-tree}
+\begin{tabular}{@{}lcccccc@{}}
+\toprule
+$p$ & 4 & 8 & 16 & 32 & 64 & 128 \\
+\midrule
+Small $n$: ring/tree      & $1.5\times$ & $2.3\times$ & $3.8\times$ & $6.2\times$ & $10.5\times$ & $18.1\times$ \\
+Large $n$: tree/ring      & $2\times$   & $3\times$   & $4\times$   & $5\times$   & $6\times$    & $7\times$ \\
+Crossover $x^\ast$        & 8.0         & 8.7         & 12.0        & 17.8        & 27.8         & 44.9 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+The model assumes that the number of chunks is free and that all links are equal.
+In \nccl{} the chunk is bounded by the size of a slot (Sec.~\ref{sec:nccl-chunks}), so a small message is a single chunk and the ring behaves as in the $k=1$ case.
+The model also ignores the network topology, which is where the Bine tree differs from the binomial one: the two have the same cost in this model (Sec.~\ref{sec:bg-bine}), so the comparison above holds for both, and Bine only changes how much of the traffic crosses the slow links.
+The measurements of Chapter~\ref{ch:tree} show the same trade-off.
 
 %------------------------------------------------------------------------------
 \subsection{Butterfly}\label{sec:bg-butterfly}

@@ -246,7 +246,7 @@ Reduce & Receive from a child (first or later) & $\langle1,0\rangle$ & \texttt{d
 \section{Testing}\label{sec:tree-testing}
 
 The schedule is a deterministic function of $p=2^s$ and of the root $t$, and every property the collectives rely on is a statement about finite tables.
-We therefore test it exhaustively against a set of invariants, for every $p=2^s$ with $1\le s\le 20$ (up to $2^{20}=1{,}048{,}576$ ranks), every root $t\in[0,p-1]$, every rank and every step.
+We therefore test it exhaustively against a set of invariants, for every $p=2^s$ with $1\le s\le 20$ (up to $2^{12}=1{,}048{,}576$ ranks), every root $t\in[0,p-1]$, every rank and every step.
 The invariants are checked on the rooted schedule $\Send_t,\Recv_t$ obtained through the rotation of Eq.~\eqref{eq:rotation}, not only on the root-$0$ tables, so that they also validate the rotation.
 
 \subsection{Invariants}
@@ -314,7 +314,7 @@ Hence the tables coincide with those defined by Eq.~\eqref{eq:partner}, and they
 
 \subsection{Scope and limits}
 
-The tests are exhaustive over all (root, rank) pairs for every power of two $p\le 2^{20}$, with a cost of $O(p^2 s)$ lookups per value of $p$.
+The tests are exhaustive over all (root, rank) pairs for every power of two $p\le 2^{12}$, with a cost of $O(p^2 s)$ lookups per value of $p$.
 Beyond this range, correctness relies on the arguments of this section, not on testing.
 The test of (\ref{inv:xor}) uses the same conversion $\rtn$ as the generator, so it checks that the tables realize the defining equation; the independent check of the construction as a whole comes from the structural invariants (\ref{inv:once})--(\ref{inv:root}).
 
@@ -335,14 +335,14 @@ Since a node holds four GPUs, $p=4$ is entirely intra-node, and every larger $p$
 \begin{figure}[H]
   \centering
   \includegraphics[width=\linewidth]{assets/plots/Bcast_SIMPLE_Ranks.png}
-  \caption{Broadcast: mean time versus number of ranks, Bine (orange) against ring (blue), for six message sizes. Solid lines with filled markers: \texttt{SIMPLE} protocol; dashed lines with hollow markers: \texttt{LL} protocol.}
+  \caption{Broadcast: mean time versus number of ranks, Bine (blue) against ring (red), for six message sizes. Solid lines with filled markers: \texttt{SIMPLE} protocol; dashed lines with hollow markers: \texttt{LL} protocol.}
   \label{fig:tree-bcast}
 \end{figure}
 
 \begin{figure}[H]
   \centering
   \includegraphics[width=\linewidth]{assets/plots/Reduce_SIMPLE_Ranks.png}
-  \caption{Reduce: mean time versus number of ranks, Bine (orange) against ring (blue), for six message sizes. Solid lines with filled markers: \texttt{SIMPLE} protocol; dashed lines with hollow markers: \texttt{LL} protocol.}
+  \caption{Reduce: mean time versus number of ranks, Bine (blue) against ring (orange), for six message sizes. Solid lines with filled markers: \texttt{SIMPLE} protocol; dashed lines with hollow markers: \texttt{LL} protocol.}
   \label{fig:tree-reduce}
 \end{figure}
 

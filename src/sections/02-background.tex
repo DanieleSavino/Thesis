@@ -121,7 +121,7 @@ A binomial tree of order $k$ is obtained by linking two binomial trees of order 
 A tree of order $s$ has $2^s$ nodes, depth $s$ and $2^s-1$ edges; the root has $s$ children, and the number of nodes at depth $d$ is the binomial coefficient $\binom{s}{d}$, which gives the tree its name.
 In a collective, each node of the tree is a rank and each edge is a communication between two ranks.
 The assignment of ranks to nodes is arbitrary, and any assignment gives a correct algorithm.
-For the collectives that include a computation (e.g., the reduce) this requires only that the operator is associative.
+For the collectives that include a computation (e.g., the reduce) this requires that the operator is associative and, since the assignment of ranks to nodes is arbitrary, commutative.
 
 \paragraph{Broadcast.}
 The root first sends the vector to one rank.

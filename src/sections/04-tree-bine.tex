@@ -151,7 +151,7 @@ The returned value $-1$ means that the rank does not communicate at that step.
 \section{Broadcast and reduce}\label{sec:tree-collectives}\label{sec:tree-bcast}\label{sec:tree-reduce}
 
 The tables describe the communication pattern only; which data moves at each step is decided by the collective.
-This chapter uses the Bine tree for broadcast and reduce, where every edge carries the whole data: the broadcast sends the buffer of the root along the tree rooted at \texttt{work->root}, and the reduce uses the same edges in the opposite direction and combines the contributions at the root.
+This section uses the Bine tree for broadcast and reduce, where every edge carries the whole data: the broadcast sends the buffer of the root along the tree rooted at \texttt{work->root}, and the reduce uses the same edges in the opposite direction and combines the contributions at the root.
 
 \subsection{Integration in \nccl{}}\label{sec:tree-integration}
 
@@ -182,12 +182,12 @@ In both, the zero-copy variant of an operation replaces the staged one when \tex
     \If{$\Recv_t(r,i) \ne \none$}
       \State \texttt{recv}$(o,n)$ \Comment{from the parent, into \texttt{recvbuff}}
     \ElsIf{$\Send_t(r,i) \ne \none$}
-      \State \texttt{send}$(o,n)$ \Comment{to a child; \texttt{copySend} on a rank that did not receive}
+      \State \texttt{send}$(o,n)$ \Comment{to a child, forwarding from \texttt{recvbuff}}
     \EndIf
   \EndFor
 \EndFor
 \If{$r = t \wedge \texttt{sendbuff} \ne \texttt{recvbuff}$}
-  \State \texttt{reduceCopy}(\texttt{sendbuff} $\to$ \texttt{recvbuff})\Comment{the staged \texttt{send} does not write the output}
+  \State \texttt{reduceCopy}(\texttt{sendbuff} $\to$ \texttt{recvbuff})\Comment{the staged \texttt{send} does not write the root's output}
 \EndIf
 \end{algorithmic}
 \end{algorithm}
@@ -238,7 +238,7 @@ Reduce & Receive from a child (first or later) & $\langle1,0\rangle$ & \texttt{d
   \item \emph{Loops.} The broadcast is chunk-outer: a chunk crosses the whole tree before the next starts, and consecutive chunks are pipelined across levels. The reduce is step-outer: a \texttt{Primitives} object is built once per step and a rank reduces the whole slice from one child before the next.
   \item \emph{Counts.} A non-root rank does one receive and $u(r)-1$ sends in the broadcast, and $u(r)-1$ receives and one send in the reduce; the root does $s$ sends or $s$ receives. For $p=8$ and root $0$, rank $3$ receives from rank $0$ at step $0$ and sends to $4$ and $2$ at steps $1$ and $2$ in the broadcast; in the reduce it receives from $2$ and $4$ at steps $2$ and $1$ and sends to $0$ at step $0$.
   \item \emph{Buffers.} In the broadcast, non-root ranks work in place on \texttt{recvbuff}. In the reduce, \texttt{recvbuff} is the accumulator: the first receive combines \texttt{sendbuff} with the child's data, later ones accumulate in place, and a leaf sends directly from \texttt{sendbuff}. The root's last receive writes the result, so no root copy is needed.
-  \item \emph{Direct flags.} The broadcast checks \texttt{NCCL\_P2P\_READ} (receive) and \texttt{NCCL\_P2P\_WRITE} (send) separately; the reduce uses one flag and selects \texttt{Direct} at compile time.
+  \item \emph{Direct flags.} The broadcast checks \texttt{NCCL\_P2P\_READ} (receive) and \texttt{NCCL\_P2P\_WRITE} (send) separately; the reduce tests the two flags together and, at run time, takes the \texttt{Direct}$=1$ or the \texttt{Direct}$=0$ instantiation for both directions.
   \item \emph{LL and LL128.} These protocols have no zero-copy path, so \texttt{directRecvReduceCopy} had to be added to \texttt{PrimitivesWithoutDirect} in \texttt{primitives.h} for the kernel to be instantiated with them.
 \end{itemize}
 
@@ -327,10 +327,10 @@ This section compares the Bine broadcast and reduce of Sec.~\ref{sec:tree-collec
 \paragraph{Setup.}
 Experiments run on the MeluXina supercomputer (see the acknowledgments), on nodes with four NVIDIA A100 GPUs connected by NVLink.
 We use $p\in\{4,8,16,32,64,128\}$ ranks (one to 32 nodes, one rank per GPU), message sizes from 1\,kB to 64\,MB, and root $0$.
-Each point is the mean over 40 iterations after 10 warmup iterations, repeated several times with consistent results; each protocol is measured separately.
+Each point is the mean over 40 iterations after 10 warmup iterations.
 Both axes of the figures are logarithmic.
 Since a node holds four GPUs, $p=4$ is entirely intra-node, and every larger $p$ also uses the inter-node network.
-\texttt{LL128} is not measured: it relies on $128$-byte stores being delivered atomically and in order, which is only guaranteed between NVLink-connected GPUs (Sec.~\ref{sec:nccl-protocols}), so on this system it could only be used at $p=4$, a single node, and would not give a comparison across scales.
+\texttt{LL128} is not measured: it relies on $128$-byte stores being delivered atomically and in order, it's usually adopted on nv-linked intra-node communication (Sec.~\ref{sec:nccl-protocols}), and \nccl{} does not enable it on this system, unless forcing it with NCCL\_PROTO=LL128, beyond the single-node case $p=4$, which would not give a comparison across scales.
 
 \begin{figure}[H]
   \centering
@@ -350,7 +350,7 @@ Since a node holds four GPUs, $p=4$ is entirely intra-node, and every larger $p$
 
 The solid lines of Figures~\ref{fig:tree-bcast} and~\ref{fig:tree-reduce} show the expected separation between $\bigO{p}$ and $\bigO{\log p}$ (Sec.~\ref{sec:bg-ring-vs-tree}).
 Up to 4\,MB the ring time grows almost linearly with $p$ (about $2\times$ per doubling), while the Bine time grows by a roughly constant increment per doubling.
-At $p=128$ Bine is faster by $5.9\times$, $6.5\times$, $5.5\times$, $4.8\times$ and $6\times$ at 1\,kB, 16\,kB, 256\,kB, 1\,MB and 4\,MB in the broadcast, and by $5.3\times$, $5.7\times$, $4.9\times$ and $3.4$--$3.5\times$ at 1\,kB to 1\,MB and 4\,MB in the reduce.
+At $p=128$ Bine is faster by $5.9\times$, $6.5\times$, $5.5\times$, $4.8\times$ and $6\times$ at 1\,kB, 16\,kB, 256\,kB, 1\,MB and 4\,MB in the broadcast, and by $5.3\times$, $5.7\times$ and $4.9\times$ at 1\,kB, 16\,kB and 256\,kB, and by $3.4$--$3.5\times$ at 1\,MB and 4\,MB in the reduce.
 At $p=4$ the ring is faster for all sizes, and the crossover lies between 4 and 8 ranks: with so few ranks the tree has few steps to save, and $p=4$ is also the only configuration that stays on NVLink.
 The measurements do not separate the two effects.
 At $p=8$ the two algorithms are within a few percent in the reduce up to 4\,MB.
@@ -367,7 +367,7 @@ The dashed lines of Figures~\ref{fig:tree-bcast} and~\ref{fig:tree-reduce} show 
 
 \paragraph{Small messages.}
 Up to 16\,kB the picture is that of \texttt{SIMPLE} at lower absolute times.
-At $p=128$ Bine is $4.4\times$ (broadcast) and $3.1\times$ (reduce) faster than the ring at 1\,kB and $4.9\times$ at 16\,kB, and Bine itself is $2.6\times$ and $1.4\times$ faster than with \texttt{SIMPLE} (broadcast).
+At $p=128$ Bine is $4.4\times$ (broadcast) and $3.1\times$ (reduce) faster than the ring at 1\,kB and $4.9\times$ at 16\,kB, and Bine itself is $2.6\times$ and $1.4\times$ faster than with \texttt{SIMPLE} in the broadcast, at 1\,kB and 16\,kB respectively.
 At small $p$ the ring is still better: at $p=4$ for all sizes, and at $p=8$ at 16\,kB (by $37\%$ in the broadcast and $27\%$ in the reduce).
 
 \paragraph{Large messages.}
@@ -376,7 +376,7 @@ At 64\,MB the ring is almost flat in $p$ (from 15.3 to 17.1\,ms in the broadcast
 This is expected.
 \texttt{LL} sustains a much lower bandwidth than \texttt{SIMPLE}, and the ring is the more bandwidth-efficient algorithm: each byte crosses each link once, while in the tree the root and the internal ranks send the buffer up to $s$ times, so the algorithm that moves more data pays more for the lower bandwidth.
 For $p\ge8$ and 64\,MB the ring is slowed down by \texttt{LL} by $1.8$--$6.3\times$ with respect to \texttt{SIMPLE}, but Bine by $15$--$41\times$.
-In addition, an intermediate rank of the ring uses the fused \texttt{directRecvCopyDirectSend} (Sec.~\ref{sec:nccl-primitives}): it receives and forwards the same data in a single pass, so every rank receives and sends at the same time and a chunk streams through the ring. In Bine, instead, a rank either receives or sends at each step (fans $\langle1,0\rangle$ and $\langle0,1\rangle$, Sec.~\ref{sec:tree-collectives}), with separate operations, so each hop of the tree is store-and-forward at the granularity of a chunk and no rank uses its receive and send directions simultaneously.
+In addition, an intermediate rank of the ring uses the fused \texttt{directRecvCopyDirectSend} (Sec.~\ref{sec:nccl-primitives}): it receives and forwards the same data in a single pass (under \texttt{LL}, which has no zero-copy path, this is the staged \texttt{recvCopySend}), so every rank receives and sends at the same time and a chunk streams through the ring. In Bine, instead, a rank either receives or sends at each step (fans $\langle1,0\rangle$ and $\langle0,1\rangle$, Sec.~\ref{sec:tree-collectives}), with separate operations, so each hop of the tree is store-and-forward at the granularity of a chunk and no rank uses its receive and send directions simultaneously.
 The slowdown follows the number of steps: at $p=4$ it is $2.1\times$ in the broadcast, about $s=2$, and it grows with $p$.
 
 \paragraph{Crossover between \texttt{LL} and \texttt{SIMPLE}.}
@@ -400,7 +400,7 @@ Ring (allgather) & 1\,MB & 16\,kB & 16\,kB & 16\,kB & -- & -- \\
 \end{table}
 
 \paragraph{Why the crossover differs: the ring allgather as a control.}\label{sec:tree-ll-allgather}
-Table~\ref{tab:tree-ll-cross} shows that the ring is not intrinsically tolerant of \texttt{LL}: the ring allgather (Fig.~\ref{fig:tree-allgather}) switches to \texttt{SIMPLE} at the same sizes as Bine, at 16\,kB for every $p\ge8$ and at 1\,MB for $p=4$, and the ring with \texttt{LL} is slower than with \texttt{SIMPLE} from 256\,kB on at $p=8$ and from 4\,MB on at every $p$.
+Table~\ref{tab:tree-ll-cross} shows that the ring is not intrinsically tolerant of \texttt{LL}: the ring allgather (Fig.~\ref{fig:tree-allgather}) switches to \texttt{SIMPLE} at the same sizes as Bine, at 16\,kB for every $p\ge8$ and at 1\,MB for $p=4$, and the ring with \texttt{LL} is slower than with \texttt{SIMPLE} from 256\,kB on at $p\ge8$ and from 4\,MB on at $p=4$.
 Same protocols, same transport and same ring, but a different crossover from the ring broadcast and reduce.
 The difference is therefore due to the algorithm, and the latency--bandwidth model of Table~\ref{tab:bg-cost} explains it.
 The size on the axis of Fig.~\ref{fig:tree-allgather} is that of the block contributed by each rank, so $n=p\,m$ in the notation of Table~\ref{tab:notation}.
@@ -424,11 +424,15 @@ The pipelined ring broadcast has instead $T\approx(p-2)\,\alpha+n\beta+(p-2)\tfr
 The same holds for the reduce, which adds $\tfrac{n}{k}\gamma$ per step and no new term in $p$.
 To first order, then, the ring does not tolerate \texttt{LL} better than Bine because it is a ring, but because in the broadcast and in the reduce the chunks hide the bandwidth cost, while a collective in which every step moves a full block, like the allgather, does not.
 
-\paragraph{The remaining gap: fan-out and fan-in.}
-The allgather also gives the reference for the slowdown at 64\,MB, where the time is entirely bandwidth. Without amortization and without fan-out, a ring with \texttt{LL} is about $9\times$ slower than with \texttt{SIMPLE} for $p\ge8$ (and about $2.5\times$ at $p=4$, which stays on NVLink).
+\paragraph{The remaining gap: stepwise primitives.}
+The allgather also gives the reference for the slowdown at 64\,MB, where the time is entirely bandwidth. Without amortization, but with the fused primitive streaming through the ring, a ring with \texttt{LL} is about $9\times$ slower than with \texttt{SIMPLE} for $p\ge8$ (and about $2.5\times$ at $p=4$, which stays on NVLink).
 Bine is slower than this, $15$--$41\times$ for $p\ge8$, and the excess grows with $p$.
-This part is not explained by the model of Table~\ref{tab:bg-cost} alone, and it is the effect of the fan-out of the tree in the broadcast and of its fan-in in the reduce. In the broadcast the root and the internal ranks send the whole buffer to up to $s$ children in sequence; in the reduce they receive and combine the whole buffer from up to $s$ children in sequence. Each hop is store-and-forward and a rank does not receive and send at the same time (Sec.~\ref{sec:tree-ll}, large messages), so the lower bandwidth of \texttt{LL} is paid once per child and per level, whereas in the ring each byte crosses each link once and streams through the fused primitive.
-In summary, the early crossover of Bine is the algorithmic cost of a collective without amortization, shared with the ring allgather, and the additional slowdown at large sizes is due to the fan-out (broadcast) and fan-in (reduce) of the tree.
+This part is not explained by the model of Table~\ref{tab:bg-cost} alone. It is an effect of how the tree kernel is built: at every step and for every chunk a new \texttt{Primitives} object is constructed with fans $\langle1,0\rangle$ (receive from the parent) or $\langle0,1\rangle$ (send to one child), so the tree is traversed as a sequence of separate point-to-point operations.
+In the broadcast an internal rank first receives the chunk and then sends it to its children one step at a time; in the reduce it receives from its children one step at a time and sends the result up at the end.
+Each hop is therefore store-and-forward, a rank never receives and sends at the same time (Sec.~\ref{sec:tree-ll}, large messages), and the cost of setting up the primitive is paid at every step and chunk.
+The ring, instead, builds one primitive per kernel and each byte streams through the fused \texttt{recvCopySend}, so the lower bandwidth of \texttt{LL} is paid once.
+A fused tree kernel would build a single \texttt{Primitives} per rank with $\texttt{FanAsymmetric}\langle1,D\rangle$ in the broadcast ($\langle D,1\rangle$ in the reduce), where $D$ is the maximum number of children, receive once and forward to all children in one operation, so that a chunk streams through the tree and the setup is paid once. % TODO: add measurements of the fused kernel
+In summary, the early crossover of Bine is the algorithmic cost of a collective without amortization, shared with the ring allgather, and the additional slowdown at large sizes is due to the stepwise, store-and-forward structure of the kernel.
 
 \paragraph{Effect on the speedup.}
 If each algorithm uses its best protocol (Table~\ref{tab:tree-best}), the advantage of Bine at medium sizes is much smaller than with \texttt{SIMPLE} alone, because the ring can use \texttt{LL} up to 4\,MB at $p=128$ and Bine cannot: at 1--4\,MB it drops from $3.4$--$6\times$ to $1.1$--$1.7\times$.
@@ -461,4 +465,4 @@ Size & Bine & Ring & Speedup & Bine & Ring & Speedup \\
 With \texttt{SIMPLE}, Bine is the better choice for small and medium messages (up to a few MB) from 8 ranks on, with speedups of $3.4$--$6.5\times$ at 128 ranks and logarithmic scaling, while for 64\,MB the ring is better or equal, the reduce being the worse case; at $p=4$ the ring always wins, but this configuration is entirely intra-node and not representative.
 \texttt{LL} helps Bine only up to 16\,kB, where it is up to $4.9\times$ faster than the ring at 128 ranks.
 Above that the ring, being more bandwidth-efficient, keeps benefiting from \texttt{LL} up to 4\,MB while Bine must switch to \texttt{SIMPLE} (the ring allgather, which has no chunk amortization, switches as early as Bine, so the early crossover is algorithmic, and the extra slowdown of Bine at large sizes is the fan-out and fan-in of the tree), so with each algorithm at its best protocol the advantage at 1--4\,MB falls to $1.1$--$1.7\times$, and at $p=8$ it vanishes below 1\,MB.
-This motivates the bandwidth-optimal algorithms of the following chapters, and a selection rule based on message size, number of ranks and protocol, not on the algorithm alone.
+This motivates the bandwidth-optimal butterfly-style algorithms of Chapter~\ref{ch:butterfly}, and a selection rule based on message size, number of ranks and protocol, not on the algorithm alone.

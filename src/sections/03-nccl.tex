@@ -73,7 +73,7 @@ This is a producer/consumer FIFO of $8$ slots, and it is what allows the sender 
 The size of a slot (\texttt{stepSize}) is the size of the buffer of the protocol divided by \texttt{NCCL\_STEPS}, and defines the \emph{chunk} (Sec.~\ref{sec:nccl-chunks}).
 
 For the transports that allow it, \nccl{} can also avoid the intermediate buffer and move the data directly between the user buffers of the two ranks (zero-copy).
-The flags \texttt{NCCL\_P2P\_WRITE}, \texttt{NCCL\_P2P\_READ} and \texttt{NCCL\_DIRECT\_NIC} in the field \texttt{direct} of the work descriptor tell the kernel which of the direct variants of the primitives (Sec.~\ref{sec:nccl-primitives}) it may use for the current operation.
+The flags \texttt{NCCL\_P2P\_WRITE} and \texttt{NCCL\_P2P\_READ} in the field \texttt{direct} of the work descriptor tell the kernel which of the direct variants of the primitives (Sec.~\ref{sec:nccl-primitives}) it may use for the current operation.
 
 \section{Proxy}\label{sec:nccl-proxy}
 

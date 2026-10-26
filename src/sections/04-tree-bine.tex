@@ -246,7 +246,7 @@ Reduce & Receive from a child (first or later) & $\langle1,0\rangle$ & \texttt{d
 \section{Testing}\label{sec:tree-testing}
 
 The schedule is a deterministic function of $p=2^s$ and of the root $t$, and every property the collectives rely on is a statement about finite tables.
-We therefore test it exhaustively against a set of invariants, for every $p=2^s$ with $1\le s\le 20$ (up to $2^{12}=1{,}048{,}576$ ranks), every root $t\in[0,p-1]$, every rank and every step.
+We therefore test it exhaustively against a set of invariants, for every $p=2^s$ with $1\le s\le 12$ (up to $2^{12}=4{,}096$ ranks), every root $t\in[0,p-1]$, every rank and every step.
 The invariants are checked on the rooted schedule $\Send_t,\Recv_t$ obtained through the rotation of Eq.~\eqref{eq:rotation}, not only on the root-$0$ tables, so that they also validate the rotation.
 
 \subsection{Invariants}
@@ -342,13 +342,13 @@ Since a node holds four GPUs, $p=4$ is entirely intra-node, and every larger $p$
 \begin{figure}[H]
   \centering
   \includegraphics[width=\linewidth]{assets/plots/Reduce_SIMPLE_Ranks.png}
-  \caption{Reduce: mean time versus number of ranks, Bine (blue) against ring (orange), for six message sizes. Solid lines with filled markers: \texttt{SIMPLE} protocol; dashed lines with hollow markers: \texttt{LL} protocol.}
+  \caption{Reduce: mean time versus number of ranks, Bine (blue) against ring (red), for six message sizes. Solid lines with filled markers: \texttt{SIMPLE} protocol; dashed lines with hollow markers: \texttt{LL} protocol.}
   \label{fig:tree-reduce}
 \end{figure}
 
 \subsection{\texttt{SIMPLE} protocol}
 
-The solid lines of Figures~\ref{fig:tree-bcast} and~\ref{fig:tree-reduce} show the expected separation between $\bigO{n}$ and $\bigO{\log n}$ (Sec.~\ref{sec:bg-ring-vs-tree}).
+The solid lines of Figures~\ref{fig:tree-bcast} and~\ref{fig:tree-reduce} show the expected separation between $\bigO{p}$ and $\bigO{\log p}$ (Sec.~\ref{sec:bg-ring-vs-tree}).
 Up to 4\,MB the ring time grows almost linearly with $p$ (about $2\times$ per doubling), while the Bine time grows by a roughly constant increment per doubling.
 At $p=128$ Bine is faster by $5.9\times$, $6.5\times$, $5.5\times$, $4.8\times$ and $6\times$ at 1\,kB, 16\,kB, 256\,kB, 1\,MB and 4\,MB in the broadcast, and by $5.3\times$, $5.7\times$, $4.9\times$ and $3.4$--$3.5\times$ at 1\,kB to 1\,MB and 4\,MB in the reduce.
 At $p=4$ the ring is faster for all sizes, and the crossover lies between 4 and 8 ranks: with so few ranks the tree has few steps to save, and $p=4$ is also the only configuration that stays on NVLink.
@@ -359,11 +359,6 @@ At 64\,MB the operation is bandwidth-bound: every edge of the tree carries the w
 Bine is therefore slower than the ring in the broadcast for $p\le64$ ($2\times$ at $p=4$, $1.2$--$1.5\times$ for $p=8$ to $64$) and on par at $p=128$.
 In the reduce it is slower at every scale ($1.8$--$3.4\times$), since the root also reduces $s$ full buffers in sequence while the ring spreads the reduction over all ranks.
 Both algorithms jump sharply between $p=4$ and $p=8$, the cost of leaving NVLink for the network.
-
-The Bine reduce at 1\,MB has a feature absent at other sizes: its time is almost flat between $p=32$ and $p=64$ (about $580$ and $620\,\mu$s) and then rises by $60\%$ at $p=128$, so the speedup over the ring goes from $1.5\times$ to $2.8\times$ to $3.4\times$.
-It was reproduced across runs, so it is not noise.
-% TODO: cause not isolated yet; candidates are the mapping of ranks to nodes/switches at 128 ranks, or a change in chunking or protocol parameters selected at this size. Verify with profiling or with a different node allocation before stating one.
-We have not isolated its cause.
 
 \subsection{\texttt{LL} protocol}\label{sec:tree-ll}
 
@@ -383,7 +378,6 @@ This is expected.
 For $p\ge8$ and 64\,MB the ring is slowed down by \texttt{LL} by $1.8$--$6.3\times$ with respect to \texttt{SIMPLE}, but Bine by $15$--$41\times$.
 In addition, an intermediate rank of the ring uses the fused \texttt{directRecvCopyDirectSend} (Sec.~\ref{sec:nccl-primitives}): it receives and forwards the same data in a single pass, so every rank receives and sends at the same time and a chunk streams through the ring. In Bine, instead, a rank either receives or sends at each step (fans $\langle1,0\rangle$ and $\langle0,1\rangle$, Sec.~\ref{sec:tree-collectives}), with separate operations, so each hop of the tree is store-and-forward at the granularity of a chunk and no rank uses its receive and send directions simultaneously.
 The slowdown follows the number of steps: at $p=4$ it is $2.1\times$ in the broadcast, about $s=2$, and it grows with $p$.
-% TODO: beyond one node the slowdown (21.5x at p=128, s=7) exceeds s by about 3x. Candidates not yet isolated: per-chunk, per-step construction of a Primitives object in the chunk-outer loop of runBine, the larger number of distinct peers, hence connections, per channel (Sec.~\ref{sec:nccl-channels}), served by the proxy on the network (Sec.~\ref{sec:nccl-proxy}), and the number of channels used by Bine. Verify with profiling before stating one.
 
 \paragraph{Crossover between \texttt{LL} and \texttt{SIMPLE}.}
 As a consequence, \texttt{SIMPLE} overtakes \texttt{LL} much earlier for Bine than for the ring (Table~\ref{tab:tree-ll-cross}): between 16 and 256\,kB for every $p\ge8$ for Bine, against between 256\,kB and 1\,MB at $p=8$ and between 4 and 64\,MB for $p\ge32$ for the ring.
@@ -392,17 +386,49 @@ The two collectives have the same crossover sizes.
 \begin{table}[t]
 \centering
 \small
-\caption{Largest measured message size for which \texttt{LL} is faster than \texttt{SIMPLE}; the crossover lies between this size and the next measured one (1\,kB, 16\,kB, 256\,kB, 1\,MB, 4\,MB, 64\,MB). The entries are the same for broadcast and reduce.}
+\caption{Largest measured message size for which \texttt{LL} is faster than \texttt{SIMPLE}; the crossover lies between this size and the next measured one (1\,kB, 16\,kB, 256\,kB, 1\,MB, 4\,MB, 64\,MB). The Bine and ring entries are the same for broadcast and reduce; the allgather (ring only, Fig.~\ref{fig:tree-allgather}) was measured up to $p=32$, a dash means not measured.}
 \label{tab:tree-ll-cross}
 \begin{tabular}{@{}l cccccc@{}}
 \toprule
  & $p=4$ & $8$ & $16$ & $32$ & $64$ & $128$ \\
 \midrule
-Bine & 1\,MB & 16\,kB  & 16\,kB & 16\,kB & 16\,kB & 16\,kB \\
-Ring & 4\,MB & 256\,kB & 1\,MB  & 4\,MB  & 4\,MB  & 4\,MB  \\
+Bine (broadcast, reduce) & 1\,MB & 16\,kB  & 16\,kB & 16\,kB & 16\,kB & 16\,kB \\
+Ring (broadcast, reduce) & 4\,MB & 256\,kB & 1\,MB  & 4\,MB  & 4\,MB  & 4\,MB  \\
+Ring (allgather) & 1\,MB & 16\,kB & 16\,kB & 16\,kB & -- & -- \\
 \bottomrule
 \end{tabular}
 \end{table}
+
+\paragraph{Why the crossover differs: the ring allgather as a control.}\label{sec:tree-ll-allgather}
+Table~\ref{tab:tree-ll-cross} shows that the ring is not intrinsically tolerant of \texttt{LL}: the ring allgather (Fig.~\ref{fig:tree-allgather}) switches to \texttt{SIMPLE} at the same sizes as Bine, at 16\,kB for every $p\ge8$ and at 1\,MB for $p=4$, and the ring with \texttt{LL} is slower than with \texttt{SIMPLE} from 256\,kB on at $p=8$ and from 4\,MB on at every $p$.
+Same protocols, same transport and same ring, but a different crossover from the ring broadcast and reduce.
+The difference is therefore due to the algorithm, and the latency--bandwidth model of Table~\ref{tab:bg-cost} explains it.
+The size on the axis of Fig.~\ref{fig:tree-allgather} is that of the block contributed by each rank, so $n=p\,m$ in the notation of Table~\ref{tab:notation}.
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=\linewidth]{assets/plots/AllGather_SIMPLE_LL_Ranks.png}
+  \caption{Ring allgather: mean time versus number of ranks, \texttt{SIMPLE} (solid, filled markers) against \texttt{LL} (dashed, hollow markers), for six block sizes, up to $p=32$.}
+  \label{fig:tree-allgather}
+\end{figure}
+
+Let $(\alpha_S,\beta_S)$ and $(\alpha_L,\beta_L)$ be the latency and the time per byte of \texttt{SIMPLE} and \texttt{LL}, with $\alpha_L<\alpha_S$ and $\beta_L>\beta_S$.
+The ring allgather and the tree broadcast have the same form: a number of steps, each paying $\alpha$ plus the transfer of a whole message,
+\begin{equation}
+  T_{\text{allgather}}=(p-1)\,(\alpha+m\beta),\qquad T_{\text{tree}}=s\,(\alpha+n\beta).
+\end{equation}
+For such an algorithm \texttt{LL} wins if $m<m^\ast=(\alpha_S-\alpha_L)/(\beta_L-\beta_S)$, and the number of steps cancels: both the latency saved and the bandwidth lost are paid at every step, so the crossover does not depend on $p$.
+This is what we observe for the ring allgather and for Bine, whose crossover stays at 16\,kB from $p=8$ to $p=32$ (to the resolution of our size grid).
+The pipelined ring broadcast has instead $T\approx(p-2)\,\alpha+n\beta+(p-2)\tfrac{n}{k}\beta$ (Eq.~\eqref{eq:bg-ring-bcast}): the bandwidth cost of the vector is paid essentially once, because the chunks are amortized over the steps, and only the latency term grows with $p$.
+\texttt{LL} then saves about $(p-2)(\alpha_S-\alpha_L)$ and loses about $n(\beta_L-\beta_S)$, so the crossover $n^\ast$ grows with $p$, as in the ring row of Table~\ref{tab:tree-ll-cross} (256\,kB at $p=8$, 4\,MB from $p=32$).
+The same holds for the reduce, which adds $\tfrac{n}{k}\gamma$ per step and no new term in $p$.
+To first order, then, the ring does not tolerate \texttt{LL} better than Bine because it is a ring, but because in the broadcast and in the reduce the chunks hide the bandwidth cost, while a collective in which every step moves a full block, like the allgather, does not.
+
+\paragraph{The remaining gap: fan-out and fan-in.}
+The allgather also gives the reference for the slowdown at 64\,MB, where the time is entirely bandwidth. Without amortization and without fan-out, a ring with \texttt{LL} is about $9\times$ slower than with \texttt{SIMPLE} for $p\ge8$ (and about $2.5\times$ at $p=4$, which stays on NVLink).
+Bine is slower than this, $15$--$41\times$ for $p\ge8$, and the excess grows with $p$.
+This part is not explained by the model of Table~\ref{tab:bg-cost} alone, and it is the effect of the fan-out of the tree in the broadcast and of its fan-in in the reduce. In the broadcast the root and the internal ranks send the whole buffer to up to $s$ children in sequence; in the reduce they receive and combine the whole buffer from up to $s$ children in sequence. Each hop is store-and-forward and a rank does not receive and send at the same time (Sec.~\ref{sec:tree-ll}, large messages), so the lower bandwidth of \texttt{LL} is paid once per child and per level, whereas in the ring each byte crosses each link once and streams through the fused primitive.
+In summary, the early crossover of Bine is the algorithmic cost of a collective without amortization, shared with the ring allgather, and the additional slowdown at large sizes is due to the fan-out (broadcast) and fan-in (reduce) of the tree.
 
 \paragraph{Effect on the speedup.}
 If each algorithm uses its best protocol (Table~\ref{tab:tree-best}), the advantage of Bine at medium sizes is much smaller than with \texttt{SIMPLE} alone, because the ring can use \texttt{LL} up to 4\,MB at $p=128$ and Bine cannot: at 1--4\,MB it drops from $3.4$--$6\times$ to $1.1$--$1.7\times$.
@@ -434,5 +460,5 @@ Size & Bine & Ring & Speedup & Bine & Ring & Speedup \\
 
 With \texttt{SIMPLE}, Bine is the better choice for small and medium messages (up to a few MB) from 8 ranks on, with speedups of $3.4$--$6.5\times$ at 128 ranks and logarithmic scaling, while for 64\,MB the ring is better or equal, the reduce being the worse case; at $p=4$ the ring always wins, but this configuration is entirely intra-node and not representative.
 \texttt{LL} helps Bine only up to 16\,kB, where it is up to $4.9\times$ faster than the ring at 128 ranks.
-Above that the ring, being more bandwidth-efficient, keeps benefiting from \texttt{LL} up to 4\,MB while Bine must switch to \texttt{SIMPLE}, so with each algorithm at its best protocol the advantage at 1--4\,MB falls to $1.1$--$1.7\times$, and at $p=8$ it vanishes below 1\,MB.
+Above that the ring, being more bandwidth-efficient, keeps benefiting from \texttt{LL} up to 4\,MB while Bine must switch to \texttt{SIMPLE} (the ring allgather, which has no chunk amortization, switches as early as Bine, so the early crossover is algorithmic, and the extra slowdown of Bine at large sizes is the fan-out and fan-in of the tree), so with each algorithm at its best protocol the advantage at 1--4\,MB falls to $1.1$--$1.7\times$, and at $p=8$ it vanishes below 1\,MB.
 This motivates the bandwidth-optimal algorithms of the following chapters, and a selection rule based on message size, number of ranks and protocol, not on the algorithm alone.

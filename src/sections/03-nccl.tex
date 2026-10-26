@@ -108,9 +108,9 @@ In the code the protocol is a template parameter of the kernels, and it is chose
 \section{Algorithms}\label{sec:nccl-algorithms}
 
 An \emph{algorithm} defines the communication pattern.
-The ones relevant here are \emph{ring} (each rank communicates only with its predecessor and successor, and data circulates around the ring: $\bigO{n}$ steps for $n$ ranks), \emph{tree} (the double binary tree of Sec.~\ref{sec:nccl-graph}, $\bigO{\log n}$ steps across nodes) and \pat{}~\cite{jeaugey2025pat} for all-gather and reduce-scatter.
+The ones relevant here are \emph{ring} (each rank communicates only with its predecessor and successor, and data circulates around the ring: $\bigO{p}$ steps for $p$ ranks), \emph{tree} (the double binary tree of Sec.~\ref{sec:nccl-graph}, $\bigO{\log p}$ steps across nodes) and \pat{}~\cite{jeaugey2025pat} for all-gather and reduce-scatter.
 Algorithms for in-network reduction (\texttt{NVLS}, \texttt{CollNet}) exist as well.
-For every algorithm and collective there is a device function that implements the pattern, and a \emph{pattern} identifier (\texttt{ncclPattern\_t}, for example tree-down for broadcast and tree-up for reduce) used by the host to compute the number of steps and the chunking.
+For every algorithm and collective there is a device function that implements the pattern, and a \emph{pattern} identifier (\texttt{ncclPattern\_t}) used by the host to compute the number of steps and the chunking.
 The Bine broadcast and reduce of Chapter~\ref{ch:tree} are new device functions of this kind, registered as a new algorithm, \texttt{NCCL\_ALGO\_BINE}, with its own pattern identifier (\texttt{ncclPatternBine}).
 
 \section{Work distribution across channels}\label{sec:nccl-distribution}

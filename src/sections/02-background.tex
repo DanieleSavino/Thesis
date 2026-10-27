@@ -258,7 +258,6 @@ Crossover $x^\ast$        & 8.0         & 8.7         & 12.0        & 17.8      
 The model assumes that the number of chunks is free and that all links are equal.
 In \nccl{} the chunk is bounded by the size of a slot (Sec.~\ref{sec:nccl-chunks}), so a small message is a single chunk and the ring behaves as in the $k=1$ case.
 The model also ignores the network topology, which is where the Bine tree differs from the binomial one: the two have the same cost in this model (Sec.~\ref{sec:bg-bine}), so the comparison above holds for both, and Bine only changes how much of the traffic crosses the slow links.
-The measurements of Chapter~\ref{ch:tree} show the same trade-off.
 
 %------------------------------------------------------------------------------
 \subsection{Butterfly}\label{sec:bg-butterfly}
@@ -287,7 +286,7 @@ The Bine tree is built recursively, like the binomial tree, but the way the two 
 A Bine tree of order $1$ (two nodes) is identical to a binomial tree.
 To build the tree of order $2$, an order-$1$ tree is connected to a copy of itself that is \emph{mirrored} (reflected on the vertical axis) and placed to its \emph{left}, rather than to the right as for a binomial tree.
 The roots are then at modular distance $1$ instead of $2$.
-The same rule gives the order-$3$ tree from two order-$2$ trees: placing the mirrored tree on the side that gives the shortest distance between the roots yields a distance of $3$, against $5$ for the other side and $4$ for the binomial tree.
+The same rule gives the order-$3$ tree from two order-$2$ trees: placing the mirrored tree on the side that gives the shortest distance between the roots yields a distance of $3$, against $4$ for the binomial tree.
 The ranks are numbered from the root from left to right, wrapping around when the rightmost node is reached, so that the ranks to the left of the root are those with the highest identifiers.
 Figure~\ref{fig:bg-bine-circle} compares the distance-halving binomial tree and the Bine tree for $p=8$.
 
@@ -402,7 +401,7 @@ Since for a binomial tree the maximum distance between two ranks is $p/2$, the d
   \approx\frac{2^{s-i}/3}{2^{s-i-1}}=\frac{2}{3}.
   \label{eq:bg-distance-ratio}
 \end{equation}
-Communicating ranks are therefore at a modular distance about $33\%$ shorter, as shown in Table~\ref{tab:bg-distance}.
+Asymptotically, communicating ranks are therefore at a modular distance about one third shorter; for the small step sizes of Table~\ref{tab:bg-distance} the reduction ranges between $25\%$ and $50\%$..
 The distances do not halve exactly at each step, but they differ by at most one from the ideal halving.
 
 \begin{table}[t]

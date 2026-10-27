@@ -59,8 +59,7 @@ The root has $\nbr{0}=0\cdots0$ and $i_0=-1$, so it sends at every step, to the 
 \subsection{Example: $p=8$}
 
 For $p=8$ ($s=3$) the masks are $M_0=111$, $M_1=011$, $M_2=001$, and the representations $\nbr{r}$, the runs $u(r)$ and the receive steps $i_r$ are those of Table~\ref{tab:bg-bine-p8}.
-For instance, rank $3$ ($\nbr{3}=111$) receives at step $0$ from $\ntr(111\oplus111)=\ntr(000)=0$, and sends at step $1$ to $\ntr(111\oplus011)=\ntr(100)=4$ and at step $2$ to $\ntr(111\oplus001)=\ntr(110)=2$.
-The resulting edges are $0\to3$ at step $0$; $0\to7$ and $3\to4$ at step $1$; $0\to1$, $3\to2$, $7\to6$ and $4\to5$ at step $2$.
+Rank $3$ was worked out in Sec.~\ref{sec:bg-bine}. The resulting edges for all ranks are $0\to3$ at step $0$; $0\to7$ and $3\to4$ at step $1$; $0\to1$, $3\to2$, $7\to6$ and $4\to5$ at step $2$.
 The tables are (``--'' stands for $\none$):
 \begin{center}
 \begin{tabular}{@{}c ccc @{\qquad} ccc@{}}
@@ -163,13 +162,52 @@ This section uses the Bine tree for broadcast and reduce, where every edge carri
 \end{itemize}
 
 \subsection{Kernels}
+
 \paragraph{Structure of \texttt{runBine}.}
-A block runs it for one channel.
-It gets its slice and chunk size with \texttt{ncclCollCbdPart} (Sec.~\ref{sec:nccl-cbd}), looks up its peer at each step in the rotated tables (Sec.~\ref{sec:tree-root}), and calls the \texttt{Primitives} operation of its role (Sec.~\ref{sec:nccl-primitives}).
-By Eqs.~\eqref{eq:recv-table} and~\eqref{eq:send-table}, at each step a rank either receives or sends, so the fan is always $\langle1,0\rangle$ or $\langle0,1\rangle$, and idle steps are skipped.
-The kernels implement no data movement themselves.
-They differ in the direction of the walk (root to leaves for the broadcast, leaves to root for the reduce) and in the operations used (Table~\ref{tab:bine-bcast-calls}).
-In both, the zero-copy variant of an operation replaces the staged one when \texttt{work->direct} allows it, and the algorithms below show the staged names only.
+A block runs \texttt{runBine} for one channel.
+It obtains its slice and the chunk size with \texttt{ncclCollCbdPart} (Sec.~\ref{sec:nccl-cbd}), looks up its peer at each step in the tables rotated by the root (Sec.~\ref{sec:tree-root}), and calls the \texttt{Primitives} operation that matches its role in that step (Sec.~\ref{sec:nccl-primitives}).
+By Eqs.~\eqref{eq:recv-table} and~\eqref{eq:send-table}, at each step a rank either receives or sends, so the fan is always $\langle1,0\rangle$ or $\langle0,1\rangle$, and steps in which the rank is idle are skipped.
+The kernels implement no data movement themselves: all transfers, and in the reduce the combination of the data, are done by the \texttt{Primitives}.
+The two kernels differ in the direction of the walk (root to leaves for the broadcast, leaves to root for the reduce), in the loop order, and in the operations used (Table~\ref{tab:bine-bcast-calls}).
+Each operation has a zero-copy variant, which replaces the staged one when \texttt{work->direct} allows it; the algorithms below show the staged names only.
+
+\paragraph{Loop order and pipelining.}
+The loop order determines how much of the tree is traversed concurrently.
+\begin{itemize}
+  \item \emph{Broadcast (chunk-outer).}
+  For each chunk of the slice, the rank walks the steps from $0$ to $s-1$, so a chunk crosses the whole tree before the same rank starts the next one.
+  Within a chunk, an internal rank is store-and-forward: it first receives the chunk and then sends it to its children, one per step.
+  Consecutive chunks overlap across levels, since a parent can send chunk $c+1$ while its child is still forwarding chunk $c$, up to the depth of the slot FIFO (Sec.~\ref{sec:nccl-transport}).
+  \item \emph{Reduce (step-outer).}
+  For each step, from $s-1$ down to $0$, the rank processes its whole slice: it receives and accumulates the slice from one child before moving to the next, and it sends the result to its parent only after the last child.
+  A parent therefore cannot start before the full slice has arrived from the child it is waiting on, and the levels of the tree are executed essentially in series.
+\end{itemize}
+Chunking in the Bine kernels thus only hides latency across levels (and, in the broadcast, across consecutive chunks); it does not amortise the bandwidth term as in the pipelined ring of Eq.~\eqref{eq:bg-ring-bcast}.
+In the broadcast the root still sends every chunk to its $s$ children, and in the reduce it still receives $s$ full slices, so the bandwidth term stays at $s\,n\beta$ as in Eq.~\eqref{eq:bg-tree-cost}.
+This is the reason why Bine loses against the ring for large vectors.
+
+\paragraph{Construction of the primitives.}
+A \texttt{Primitives} object is bound to its peers at construction, when it loads the connectors towards them, so a new object is needed whenever the peer or the direction changes.
+In the broadcast it is constructed inside the step loop, hence for every chunk and every step in which the rank is active; in the reduce it is constructed once per step and reused for all the chunks of the slice.
+Since the fan of an object is fixed at compile time, the kernel instantiates the two fans $\langle1,0\rangle$ and $\langle0,1\rangle$ and chooses between them with the role of the rank in the step.
+The cost of this setup, and the fact that no object receives and sends at the same time, are the main differences from the fused kernels of the ring (Sec.~\ref{sec:tree-ll}).
+
+\paragraph{Zero-copy selection.}
+The broadcast reads the two direct flags separately, \texttt{NCCL\_P2P\_READ} for the receive and \texttt{NCCL\_P2P\_WRITE} for the send, and always instantiates the primitives with \texttt{Direct}$=1$, deciding at run time between the direct and the staged call.
+The reduce tests the two flags together and, at run time, takes the \texttt{Direct}$=1$ or the \texttt{Direct}$=0$ instantiation for both directions.
+
+\paragraph{Buffers and root output.}
+\begin{itemize}
+  \item \emph{Broadcast.} The root sends from \texttt{sendbuff}, while the other ranks work in place on \texttt{recvbuff}. When \texttt{sendbuff}$\neq$\texttt{recvbuff}, the staged send does not write the output of the root, so after the loop the root copies its slice into \texttt{recvbuff} with \texttt{reduceCopy}.
+  \item \emph{Reduce.} \texttt{recvbuff} is the accumulator: the first receive combines \texttt{sendbuff} with the child's data, later ones accumulate in place, and a leaf sends directly from \texttt{sendbuff}. The root's last receive writes the result, so no root copy is needed.
+\end{itemize}
+
+\paragraph{Operation counts.}
+A non-root rank does one receive and $u(r)-1$ sends in the broadcast, and $u(r)-1$ receives and one send in the reduce; the root does $s$ sends or $s$ receives.
+For $p=8$ and root $0$, rank $3$ receives from rank $0$ at step $0$ and sends to $4$ and $2$ at steps $1$ and $2$ in the broadcast; in the reduce it receives from $2$ and $4$ at steps $2$ and $1$ and sends to $0$ at step $0$.
+
+\paragraph{LL and LL128.}
+These protocols have no zero-copy path, so \texttt{directRecvReduceCopy} had to be added to \texttt{PrimitivesWithoutDirect} in \texttt{primitives.h} for the reduce kernel to be instantiated with them.
 
 \begin{algorithm}[H]
 \caption{Bine broadcast (\texttt{runBine}, one block per channel).}
@@ -232,15 +270,6 @@ Reduce & Receive from a child (first or later) & $\langle1,0\rangle$ & \texttt{d
 \bottomrule
 \end{tabular}
 \end{table}
-
-\paragraph{Implementation notes.}
-\begin{itemize}
-  \item \emph{Loops.} The broadcast is chunk-outer: a chunk crosses the whole tree before the next starts, and consecutive chunks are pipelined across levels. The reduce is step-outer: a \texttt{Primitives} object is built once per step and a rank reduces the whole slice from one child before the next.
-  \item \emph{Counts.} A non-root rank does one receive and $u(r)-1$ sends in the broadcast, and $u(r)-1$ receives and one send in the reduce; the root does $s$ sends or $s$ receives. For $p=8$ and root $0$, rank $3$ receives from rank $0$ at step $0$ and sends to $4$ and $2$ at steps $1$ and $2$ in the broadcast; in the reduce it receives from $2$ and $4$ at steps $2$ and $1$ and sends to $0$ at step $0$.
-  \item \emph{Buffers.} In the broadcast, non-root ranks work in place on \texttt{recvbuff}. In the reduce, \texttt{recvbuff} is the accumulator: the first receive combines \texttt{sendbuff} with the child's data, later ones accumulate in place, and a leaf sends directly from \texttt{sendbuff}. The root's last receive writes the result, so no root copy is needed.
-  \item \emph{Direct flags.} The broadcast checks \texttt{NCCL\_P2P\_READ} (receive) and \texttt{NCCL\_P2P\_WRITE} (send) separately; the reduce tests the two flags together and, at run time, takes the \texttt{Direct}$=1$ or the \texttt{Direct}$=0$ instantiation for both directions.
-  \item \emph{LL and LL128.} These protocols have no zero-copy path, so \texttt{directRecvReduceCopy} had to be added to \texttt{PrimitivesWithoutDirect} in \texttt{primitives.h} for the kernel to be instantiated with them.
-\end{itemize}
 
 %==============================================================================
 \section{Testing}\label{sec:tree-testing}
@@ -330,7 +359,7 @@ We use $p\in\{4,8,16,32,64,128\}$ ranks (one to 32 nodes, one rank per GPU), mes
 Each point is the mean over 40 iterations after 10 warmup iterations.
 Both axes of the figures are logarithmic.
 Since a node holds four GPUs, $p=4$ is entirely intra-node, and every larger $p$ also uses the inter-node network.
-\texttt{LL128} is not measured: it relies on $128$-byte stores being delivered atomically and in order, it's usually adopted on nv-linked intra-node communication (Sec.~\ref{sec:nccl-protocols}), and \nccl{} does not enable it on this system, unless forcing it with NCCL\_PROTO=LL128, beyond the single-node case $p=4$, which would not give a comparison across scales.
+\texttt{LL128} is not measured: it relies on $128$-byte stores being delivered atomically and in order, it is usually adopted on nv-linked intra-node communication (Sec.~\ref{sec:nccl-protocols}), and \nccl{} does not enable it on this system, unless forcing it with NCCL\_PROTO=LL128, beyond the single-node case $p=4$, which would not give a comparison across scales.
 
 \begin{figure}[H]
   \centering
@@ -419,7 +448,7 @@ The ring allgather and the tree broadcast have the same form: a number of steps,
 \end{equation}
 For such an algorithm \texttt{LL} wins if $m<m^\ast=(\alpha_S-\alpha_L)/(\beta_L-\beta_S)$, and the number of steps cancels: both the latency saved and the bandwidth lost are paid at every step, so the crossover does not depend on $p$.
 This is what we observe for the ring allgather and for Bine, whose crossover stays at 16\,kB from $p=8$ to $p=32$ (to the resolution of our size grid).
-The pipelined ring broadcast has instead $T\approx(p-2)\,\alpha+n\beta+(p-2)\tfrac{n}{k}\beta$ (Eq.~\eqref{eq:bg-ring-bcast}): the bandwidth cost of the vector is paid essentially once, because the chunks are amortized over the steps, and only the latency term grows with $p$.
+Expanding Eq.~\eqref{eq:bg-ring-bcast}, the pipelined ring broadcast has instead $T=(p+k-2)\,\alpha+n\beta+(p-2)\tfrac{n}{k}\beta$: the bandwidth cost of the vector is paid essentially once, because the chunks are amortized over the steps. Choosing $k$ near $k^\ast$ keeps the remaining terms small, so to first order the dependence on $p$ is the latency term $(p-2)\alpha$.
 \texttt{LL} then saves about $(p-2)(\alpha_S-\alpha_L)$ and loses about $n(\beta_L-\beta_S)$, so the crossover $n^\ast$ grows with $p$, as in the ring row of Table~\ref{tab:tree-ll-cross} (256\,kB at $p=8$, 4\,MB from $p=32$).
 The same holds for the reduce, which adds $\tfrac{n}{k}\gamma$ per step and no new term in $p$.
 To first order, then, the ring does not tolerate \texttt{LL} better than Bine because it is a ring, but because in the broadcast and in the reduce the chunks hide the bandwidth cost, while a collective in which every step moves a full block, like the allgather, does not.

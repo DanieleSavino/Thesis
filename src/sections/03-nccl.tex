@@ -1,7 +1,7 @@
 \chapter{NCCL}\label{ch:nccl}
 
 This chapter describes the parts of \nccl{}~\cite{nccl} that the rest of the thesis relies on.
-It is not a complete description of the library: it follows a collective from the moment it is issued to the moment the data is moved, and introduces, in this order, the topology graph, the channels, the transports, the proxy, the protocols, the way the work is distributed across channels, and the device-side primitives that the kernels are written with.
+It is not a complete description of the library: it follows a collective from the moment it is issued to the moment the data is moved, and introduces, in this order, the topology graph (Sec.~\ref{sec:nccl-graph}), the channels (Sec.~\ref{sec:nccl-channels}), the transports, the proxy, the protocols (Sec.~\ref{sec:nccl-protocols}), the way the work is distributed across channels (Sec.~\ref{sec:nccl-cbd}), and the device-side primitives that the kernels are written with (Sec.~\ref{sec:nccl-primitives}).
 The functions and data structures used by the Bine kernels in the following chapters are defined here and referenced from there.
 For a more detailed analysis of the library see~\cite{hu2025demystifying}.
 The source excerpts and names refer to the \nccl{} code base the thesis was developed on, and some of them (flag names, internal helpers) can change between versions.
@@ -41,16 +41,61 @@ The Bine tree does not use the tree graph: its peers are computed from the rank 
 \section{Channels}\label{sec:nccl-channels}
 
 A \emph{channel} is the unit of parallelism of \nccl{}.
-It is an independent set of connections to the peers of the algorithm (the ring neighbours, or the tree parent and children) together with its own buffers, and it is executed by exactly one thread block of the kernel; the kernel is launched with as many blocks as there are channels in use.
+It is an independent set of connections to the peers of the algorithm (the ring neighbours, or the tree parent and children) together with its own buffers, and it is executed by exactly one thread block of the kernel; the kernel is launched with as many blocks as there are channels in use (Fig.~\ref{fig:nccl-channels}).
 Different channels move different, disjoint portions of the data concurrently, and may follow different paths in the machine (for example, different rings, or different network interfaces), which is how \nccl{} uses several links at the same time.
 
-The number of channels is bounded by the graph search and by \texttt{MAXCHANNELS}, and for each collective the number actually used depends on the message size, since a small message does not justify the use of many blocks.
+The number of channels is bounded by the graph search and by \texttt{MAXCHANNELS}, and for each collective the number actually used depends on the vector size, since a small message does not justify the use of many blocks.
 Every channel has its own copy of the peer information (the \texttt{ncclChannel} structure on the host, \texttt{ncclDevChannel} on the device), and at the start of the kernel each block copies the state of its channel in the shared memory of the block, in the \texttt{ncclShmem} structure.
 \texttt{ncclShmem} holds the communicator information (rank, number of ranks), the identifier of the channel (\texttt{channelId}), the channel structure with the peers of each algorithm, and the description of the work to execute (\texttt{ncclDevWorkColl}, Sec.~\ref{sec:nccl-distribution}).
 Each algorithm adds its own data to the channel structure; the Bine tables of Chapter~\ref{ch:tree} are stored there, in \texttt{channel.bine}.
 
 An important property, used in Chapter~\ref{ch:butterfly}, is that a connection belongs to a channel: the connections of a channel are created once, at communicator creation, between the peers that the algorithm needs, and the kernel cannot create new ones.
 An algorithm in which a rank talks to a number of distinct peers that grows with the number of ranks would need as many connections per channel.
+
+\begin{figure}[t]
+  \centering
+  \resizebox{\linewidth}{!}{%
+  \begin{tikzpicture}[font=\small, >={Stealth[length=2.2mm]},
+    blk/.style={rounded corners=2pt, draw, thick, minimum height=0.8cm,
+                minimum width=2.3cm, align=center, fill=white},
+    peer/.style={circle, draw, minimum size=0.85cm, inner sep=0pt, fill=white,
+                 font=\footnotesize}]
+
+    % data vector, split in disjoint slices
+    \fill[ch0!25]  (0,0)    rectangle (1.6,1.4);
+    \fill[ch1!25]  (0,-2.8) rectangle (1.6,-1.4);
+    \fill[gray!10] (0,-1.4) rectangle (1.6,0);
+    \draw[thick] (0,-2.8) rectangle (1.6,1.4);
+    \draw[thick] (0,0)    -- (1.6,0);
+    \draw[thick] (0,-1.4) -- (1.6,-1.4);
+    \node[text=ch0!80!black, font=\footnotesize] at (0.8,0.7)  {slice 0};
+    \node[text=ch1!80!black, font=\footnotesize] at (0.8,-2.1) {slice 1};
+    \node[gray, font=\footnotesize] at (0.8,-0.7) {$\vdots$};
+    \node[font=\footnotesize] at (0.8,2.0) {data vector};
+
+    % channels
+    \foreach \c/\y/\col/\lab in {0/0.7/ch0/A, 1/-2.1/ch1/B} {
+      \node[blk, draw=\col] (t\c) at (4.1,\y) {thread block \c};
+      \node[blk, draw=\col, right=0.3cm of t\c] (b\c) {buffers};
+      \node[blk, draw=\col, right=0.3cm of b\c] (k\c) {connections};
+      \begin{scope}[on background layer]
+        \node[rounded corners=4pt, fill=\col!10, draw=\col, thick,
+              fit=(t\c)(b\c)(k\c), inner sep=9pt,
+              label={[text=\col!80!black]above left:\textbf{channel \c}}] (box\c) {};
+      \end{scope}
+      \draw[->, thick, \col] (1.6,\y) -- (box\c.west);
+      \node[peer] (p\c) at (12.6,\y+0.55) {prev};
+      \node[peer] (n\c) at (12.6,\y-0.55) {next};
+      \draw[<-, thick, \col] ([yshift=0.15cm]box\c.east)  -- ++(0.5,0) |- (p\c.west);
+      \draw[->, thick, \col] ([yshift=-0.15cm]box\c.east) -- ++(0.5,0) |- (n\c.west);
+      \node[font=\footnotesize, text=\col!80!black] at (14.1,\y) {path \lab};
+    }
+  \end{tikzpicture}}
+  \caption{Two channels of \nccl{}, each with its own thread block, buffers and
+           connections, working on a disjoint slice of the data vector and following
+           different paths (A and B).}
+  \label{fig:nccl-channels}
+\end{figure}
 
 \section{Transports}\label{sec:nccl-transport}
 
@@ -70,10 +115,58 @@ A connection is a small set of shared structures, mainly the intermediate buffer
 The buffer is divided in \texttt{NCCL\_STEPS}$=8$ \emph{slots} (also called steps).
 The sender fills a slot and advances the \texttt{head}/\texttt{tail} counter; the receiver waits on the counter, consumes the slot and advances the other counter, which returns the slot to the sender.
 This is a producer/consumer FIFO of $8$ slots, and it is what allows the sender to proceed up to $8$ slots ahead of the receiver without any other synchronisation.
-The size of a slot (\texttt{stepSize}) is the size of the buffer of the protocol divided by \texttt{NCCL\_STEPS}, and defines the \emph{chunk} (Sec.~\ref{sec:nccl-chunks}).
+The size of a slot (\texttt{stepSize}) is the size of the buffer of the protocol divided by \texttt{NCCL\_STEPS}, and defines the chunk (Sec.~\ref{sec:nccl-chunks}, Fig.~\ref{fig:nccl-slots}).
 
 For the transports that allow it, \nccl{} can also avoid the intermediate buffer and move the data directly between the user buffers of the two ranks (zero-copy).
 The flags \texttt{NCCL\_P2P\_WRITE} and \texttt{NCCL\_P2P\_READ} in the field \texttt{direct} of the work descriptor tell the kernel which of the direct variants of the primitives (Sec.~\ref{sec:nccl-primitives}) it may use for the current operation.
+
+\begin{figure}[t]
+  \centering
+  \resizebox{0.9\linewidth}{!}{%
+  \begin{tikzpicture}[font=\small, >={Stealth[length=2.2mm]},
+    cell/.style={draw, thick, minimum height=0.7cm, inner sep=0pt, font=\footnotesize}]
+
+    % vector split among channels
+    \node[cell, fill=ch0!25, minimum width=5cm, anchor=south west] (s0) at (0,0) {slice of channel 0};
+    \node[cell, fill=ch1!25, minimum width=5cm, anchor=south west] (s1) at (5,0) {slice of channel 1};
+    \node[font=\footnotesize, anchor=south west] at (0,0.8) {data vector ($n$ bytes)};
+
+    % chunks of channel 0
+    \foreach \i in {0,...,7}
+      \node[cell, fill=ch0!12, minimum width=1cm, anchor=north west] (c\i) at (\i,-1.6) {\i};
+    \node[font=\footnotesize, anchor=west] at (8.15,-1.95) {$\cdots$};
+    \node[font=\footnotesize, anchor=east] at (-0.2,-1.95) {chunks};
+    \draw[dashed, gray] (s0.south west) -- (c0.north west);
+    \draw[dashed, gray] (s0.south east) -- ([xshift=0.8cm]c7.north east);
+
+    % FIFO of the connection
+    \foreach \i in {0,...,7}
+      \node[cell, fill=white, draw=ch0, minimum width=1cm, anchor=north west] (f\i) at (\i,-3.8) {\i};
+    \node[font=\footnotesize, anchor=east] at (-0.2,-4.15) {slots};
+    \foreach \i in {0,...,7}
+      \draw[->, thick, ch0] (c\i.south) -- (f\i.north);
+    \node[font=\footnotesize, anchor=west, align=left] at (8.3,-2.9)
+      {chunk $i+8$ reuses\\slot $i$ once returned};
+
+    % size of a slot / chunk
+    \draw[decorate, decoration={brace, mirror, amplitude=3pt}]
+      ([yshift=-0.1cm]f7.south west) -- ([yshift=-0.1cm]f7.south east)
+      node[midway, below=3pt, font=\footnotesize] {\texttt{stepSize}};
+
+    % FIFO label, sender / receiver
+    \node[font=\footnotesize, anchor=west, align=left] at (8.3,-4.15)
+      {FIFO of\\\texttt{NCCL\_STEPS}$=8$ slots};
+    \node[font=\footnotesize, anchor=north west, align=left] at (0,-5.3)
+      {sender: fills a slot,\\advances \emph{head}};
+    \node[font=\footnotesize, anchor=north west, align=left] at (4,-5.3)
+      {receiver: consumes a slot,\\advances \emph{tail}};
+  \end{tikzpicture}}
+  \caption{From the vector to the slots. The vector is split in one slice per channel,
+           the slice is processed in chunks, and each chunk goes through one slot of the
+           FIFO of the connection of the channel; the size of a slot (\texttt{stepSize})
+           defines the chunk.}
+  \label{fig:nccl-slots}
+\end{figure}
 
 \section{Proxy}\label{sec:nccl-proxy}
 
@@ -102,8 +195,54 @@ A protocol defines how the data and the synchronisation are encoded in the slots
   \item[LL128.] The same idea with $128$-byte lines of which $8$ bytes are the flag and $120$ are data ($93.75\,\%$ efficiency), relying on the fact that on NVLink-connected GPUs a $128$-byte store is delivered atomically and in order.
   It is used on systems where this is guaranteed.
 \end{description}
-The protocol determines the size of the buffer, hence of the chunk, and the \emph{grain}, i.e., the granularity at which the data of a channel is split (\texttt{ncclProtoGrainSize}: $16$ bytes for LL, $512$ for Simple, and $1920$ bytes for LL128, a whole number of $120$-byte data payloads).
+The protocol determines the size of the buffer, hence of the chunk, and the \emph{grain}, i.e., the granularity at which the data of a channel is split (\texttt{ncclProtoGrainSize}: $16$ bytes for LL, $512$ for Simple, and $1920$ bytes for LL128, a whole number of $120$-byte data payloads), as shown in Fig.~\ref{fig:nccl-grain}.
 In the code the protocol is a template parameter of the kernels, and it is chosen at launch together with the algorithm.
+
+\begin{figure}[H]
+  \centering
+  \resizebox{0.85\linewidth}{!}{%
+  \begin{tikzpicture}[font=\small,
+    cell/.style={draw, thick, minimum height=0.6cm, inner sep=0pt, font=\footnotesize}]
+
+    % vector split among channels
+    \node[cell, fill=ch0!25, minimum width=5cm, anchor=south west] (s0) at (2.4,0) {slice of channel 0};
+    \node[cell, fill=ch1!25, minimum width=5cm, anchor=south west] (s1) at (7.4,0) {slice of channel 1};
+    \node[font=\footnotesize, anchor=south west] at (2.4,0.7)
+      {data vector ($n$ bytes), slices are whole numbers of grains};
+
+    \foreach \k/\name/\gr/\chk/\ng in {
+        0/{LL}/{16\,B}/{16\,KiB}/{1024},
+        1/{Simple}/{512\,B}/{512\,KiB}/{1024},
+        2/{LL128}/{1920\,B (16 payloads of 120\,B)}/{562.5\,KiB}/{300}} {
+      \pgfmathsetmacro{\y}{-2.2-3.7*\k}
+      \node[font=\footnotesize\bfseries, anchor=south west] at (2.4,\y+0.65) {\name};
+      % slice of channel 0 as chunks
+      \node[cell, fill=ch0!20, minimum width=2.6cm, anchor=south west] (c0\k) at (2.4,\y) {chunk 0};
+      \node[cell, fill=ch0!20, minimum width=2.6cm, anchor=south west] (c1\k) at (5.0,\y) {chunk 1};
+      \node[font=\footnotesize, anchor=south west] at (7.8,\y+0.1) {$\cdots$};
+      \node[cell, fill=ch0!8, minimum width=1.8cm, anchor=south west] (cl\k) at (8.6,\y) {last chunk};
+      % grains of chunk 0
+      \node[cell, fill=white, draw=ch0, minimum width=1.4cm, anchor=south west] (g0\k) at (2.4,\y-1.6) {grain};
+      \node[cell, fill=white, draw=ch0, minimum width=1.4cm, anchor=south west] (g1\k) at (3.8,\y-1.6) {grain};
+      \node[cell, fill=white, draw=ch0, minimum width=1.4cm, anchor=south west] (g2\k) at (5.2,\y-1.6) {grain};
+      \node[font=\footnotesize, anchor=south west] at (6.9,\y-1.5) {$\cdots$};
+      \node[cell, fill=white, draw=ch0, minimum width=1.4cm, anchor=south west] (gl\k) at (7.6,\y-1.6) {grain};
+      \draw[dashed, gray] (c0\k.south west) -- (g0\k.north west);
+      \draw[dashed, gray] (c0\k.south east) -- (gl\k.north east);
+      \draw[decorate, decoration={brace, mirror, amplitude=3pt}]
+         ([yshift=-0.08cm]g0\k.south west) -- ([yshift=-0.08cm]gl\k.south east)
+         node[midway, below=4pt, font=\footnotesize, align=center]
+         {grain: \gr\\chunk: \chk\ ($\ng$ grains)};
+    }
+    \draw[dashed, gray] (s0.south west) -- (c00.north west);
+    \draw[dashed, gray] (s0.south east) -- (cl0.north east);
+  \end{tikzpicture}}
+  \caption{Partitioning of the vector for the three protocols. The vector is split in one
+           slice per channel, each slice in chunks, and each chunk in grains, the smallest
+           unit of data that is assigned (\texttt{ncclProtoGrainSize}). Sizes are those of
+           the default configuration~\cite{hu2025demystifying}; the picture is not to scale.}
+  \label{fig:nccl-grain}
+\end{figure}
 
 \section{Algorithms}\label{sec:nccl-algorithms}
 
@@ -113,15 +252,91 @@ Algorithms for in-network reduction (\texttt{NVLS}, \texttt{CollNet}) exist as w
 For every algorithm and collective there is a device function that implements the pattern, and a \emph{pattern} identifier (\texttt{ncclPattern\_t}) used by the host to compute the number of steps and the chunking.
 The Bine broadcast and reduce of Chapter~\ref{ch:tree} are new device functions of this kind, registered as a new algorithm, \texttt{NCCL\_ALGO\_BINE}, with its own pattern identifier (\texttt{ncclPatternBine}).
 
+
 \section{Work distribution across channels}\label{sec:nccl-distribution}
 
-\subsection{Traffic-based splitting}
+\begin{figure}[H]
+  \centering
+  \resizebox{\linewidth}{!}{%
+  \begin{tikzpicture}[font=\small, >={Stealth[length=2.2mm]},
+    cell/.style={draw, thick, minimum height=0.8cm, inner sep=0pt,
+                 font=\footnotesize, anchor=north west}]
 
-When a collective is enqueued, its input is split across the channels so that every channel carries approximately the same amount of \emph{traffic}, and not necessarily the same number of elements.
+  % ---------- (a) traffic-based split ----------
+  \node[font=\footnotesize\bfseries, anchor=west] at (-2.6,0.9)
+    {(a) splitting by traffic, not by elements};
+
+  \node[font=\footnotesize, anchor=east, align=right] at (-0.2,-0.4) {user data\\(bytes)};
+  \node[cell, fill=gray!12, minimum width=3cm] at (0,0) {coll.\ A: $\tau_A=1$};
+  \node[cell, fill=gray!35, minimum width=3cm] at (3,0) {coll.\ B: $\tau_B=2$};
+
+  \node[font=\footnotesize, anchor=east, align=right] at (-0.2,-2.4) {traffic\\bytes${}\times\tau$};
+  \node[cell, fill=gray!12, minimum width=3cm] at (0,-2) {};
+  \node[cell, fill=gray!35, minimum width=6cm] at (3,-2) {};
+  \draw[dashed, gray] (0,-0.8) -- (0,-2);
+  \draw[dashed, gray] (3,-0.8) -- (3,-2);
+  \draw[dashed, gray] (6,-0.8) -- (9,-2);
+  \node[font=\footnotesize] at (1.5,-2.4) {A};
+  \node[font=\footnotesize] at (6,-2.4) {B ($2\times$ the traffic per byte)};
+
+  \foreach \x in {3,6} \draw[dashed, thick] (\x,-1.7) -- (\x,-3.0);
+  \foreach \a/\b in {0/3,3/6,6/9}
+    \draw[decorate, decoration={brace, amplitude=3pt}] (\a,-1.9) -- (\b,-1.9)
+      node[midway, above=3pt, font=\footnotesize] {\texttt{trafficPerChannel}};
+  \node[font=\footnotesize, anchor=west] at (9.3,-2.4)
+    {$=\dfrac{\sum \text{traffic}}{\text{number of channels}}$};
+
+  \node[font=\footnotesize, anchor=east, align=right] at (-0.2,-4.9) {elements\\per channel};
+  \node[cell, fill=ch0!30, draw=ch0, minimum width=3cm]   at (0,-4.5)   {channel 0};
+  \node[cell, fill=ch1!30, draw=ch1, minimum width=1.5cm] at (3,-4.5)   {ch.\ 1};
+  \node[cell, fill=ch2!30, draw=ch2, minimum width=1.5cm] at (4.5,-4.5) {ch.\ 2};
+  \draw[dashed, gray] (0,-3.0) -- (0,-4.5);
+  \draw[dashed, gray] (3,-3.0) -- (3,-4.5);
+  \draw[dashed, gray] (6,-3.0) -- (4.5,-4.5);
+  \draw[dashed, gray] (9,-3.0) -- (6,-4.5);
+  \node[font=\footnotesize, anchor=west, align=left] at (6.4,-4.9)
+    {same traffic on every channel,\\different number of elements};
+
+  % ---------- (b) cells ----------
+  \node[font=\footnotesize\bfseries, anchor=west] at (-2.6,-6.6)
+    {(b) the unit of assignment is the cell (small message, 4 channels available)};
+
+  \node[font=\footnotesize, anchor=east, align=right] at (-0.2,-7.7) {traffic of\\the message};
+  \foreach \i in {0,1,2}
+    \node[cell, fill=gray!15, minimum width=1.5cm] (c\i) at (1.5*\i,-7.3) {cell \i};
+  \draw[decorate, decoration={brace, mirror, amplitude=3pt}]
+    ([yshift=-0.1cm]c0.south west) -- ([yshift=-0.1cm]c0.south east)
+    node[midway, below=3pt, align=center, font=\footnotesize] {$32$\,KiB of\\traffic};
+  \node[font=\footnotesize, anchor=west, align=left] at (4.8,-7.7)
+    {\texttt{MinTrafficPerChannel}: a cell is the amount\\
+     of data that generates $32$\,KiB of traffic,\\
+     rounded to a multiple of $16$\,B};
+
+  \node[font=\footnotesize, anchor=east, align=right] at (-0.2,-10.1) {assignment};
+  \node[cell, fill=ch0!30, draw=ch0, minimum width=1.5cm] at (0,-9.7)   {ch.\ 0};
+  \node[cell, fill=ch1!30, draw=ch1, minimum width=1.5cm] at (1.5,-9.7) {ch.\ 1};
+  \node[cell, fill=ch2!30, draw=ch2, minimum width=1.5cm] at (3,-9.7)   {ch.\ 2};
+  \node[cell, dashed, draw=gray, text=gray, minimum width=1.5cm] at (4.5,-9.7) {ch.\ 3};
+  \foreach \i in {0,1,2} \draw[->, thick, gray] ([yshift=-0.9cm]c\i.south) -- ++(0,-0.35);
+  \node[font=\footnotesize, anchor=west, align=left] at (6.2,-10.1)
+    {a channel gets a whole number of cells;\\the message is not spread over all channels};
+  \end{tikzpicture}}
+  \caption{Traffic-based splitting. (a)~The input of each collective is weighted by its
+           \texttt{trafficPerByte} $\tau$, and the total traffic is divided equally among the
+           channels; channels can therefore carry different numbers of elements.
+           (b)~Data is assigned in cells (the amount of data generating $32$\,KiB of
+           traffic), so a small message uses only as many channels as it has cells.}
+  \label{fig:nccl-traffic}
+\end{figure}
+
+\subsection{Traffic-based splitting}\label{sec:nccl-traffic}
+
+When a collective is enqueued, its input is split across the channels so that every channel carries approximately the same amount of \emph{traffic}, and not necessarily the same number of elements (Fig.~\ref{fig:nccl-traffic}a).
 The traffic generated by one byte of user data depends on the collective: for example, an all-reduce moves each byte more than a broadcast does.
 The host computes for each collective the \texttt{trafficPerByte} (increased for the LL protocol to account for the flag overhead), sums the traffic of all the collectives of the plan, and divides it by the number of channels to obtain the \texttt{trafficPerChannel}.
+In the figure, collective~B generates twice the traffic per byte of collective~A, so the same amount of data of~B is spread over more channels than that of~A, and the channels end up with different numbers of elements but the same traffic.
 To avoid splitting small messages among too many channels, the data is not split element by element but in \emph{cells}: a cell is the amount of data that generates a minimum traffic of $32$ KiB (\texttt{MinTrafficPerChannel}), rounded to a multiple of $16$ bytes.
-A channel receives an integer number of cells.
+A channel receives an integer number of cells, so a message made of few cells uses only as many channels as it has cells (Fig.~\ref{fig:nccl-traffic}b).
 
 \subsection{Continuous byte distribution (CBD)}\label{sec:nccl-cbd}
 
@@ -168,11 +383,11 @@ The proxy operations of Sec.~\ref{sec:nccl-proxy} are built from the same values
 
 \subsection{Chunking}\label{sec:nccl-chunks}
 
-A channel does not move its slice with a single transfer, but a \emph{chunk} at a time.
-The chunk is bounded by the size of a slot of the connection: for the tree algorithm it is a slot, $\mathit{stepSize}=\mathit{bufferSize}/\texttt{NCCL\_STEPS}$, halved for LL (half of the slot is flags), and scaled by $120/128$ for LL128 (the data of a line).
+A channel does not move its slice with a single transfer, but a \emph{chunk} at a time (Fig.~\ref{fig:nccl-slots}).
+The chunk is bounded by the size of a slot of the connection: for the tree algorithm it is a slot, $\mathit{stepSize}=\mathit{bufferSize}/\texttt{NCCL\_STEPS}$, halved for LL (half of the slot is flags), and scaled by $120/128$ for LL128 (the data of a line); the resulting sizes for the three protocols are shown in Fig.~\ref{fig:nccl-grain}.
 The host computes the chunk (\texttt{calcCollChunking}; a few algorithms, such as \texttt{NVLS} and \texttt{CollNet}, shrink it for small messages) and stores it in the descriptor as a number of grains, which \texttt{ncclCollCbdPart} converts back to elements.
 The kernel loops over the chunks of its slice and the last chunk is shorter if the slice is not a multiple of the chunk.
-Because the slot FIFO has several slots, consecutive chunks are pipelined: while a chunk is being consumed by the receiver the sender can already fill the following ones.
+Because the slot FIFO has several slots, consecutive chunks are pipelined: while a chunk is being consumed by the receiver the sender can already fill the following ones, as in Fig.~\ref{fig:nccl-slots}, where chunk $i+8$ reuses slot $i$ once the receiver has returned it.
 
 \section{Device side}\label{sec:nccl-device}
 

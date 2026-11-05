@@ -19,7 +19,7 @@
 \usepackage{subcaption}        % subfigures
 \usepackage{xcolor}
 \usepackage{tikz}
-\usetikzlibrary{arrows.meta, positioning, calc, fit}
+\usetikzlibrary{arrows.meta, positioning, calc, fit, backgrounds, decorations.pathreplacing}
 \usepackage{pgfplots}
 \pgfplotsset{compat=1.18}
 \usepackage{listings}          % source excerpts from NCCL
@@ -74,7 +74,6 @@
 \newcommand{\Recv}{\mathcal{R}}
 \newcommand{\none}{\bot}
 
-\usetikzlibrary{arrows.meta, fit, backgrounds}
 \definecolor{crosslink}{RGB}{200,40,40}
 \definecolor{localxfer}{RGB}{60,150,70}
 
@@ -137,3 +136,8 @@
     #1
   \end{tikzpicture}%
 }
+
+% Preamble (colors; the tikz libraries arrows.meta, positioning, fit, backgrounds, calc are already loaded)
+\definecolor{ch0}{RGB}{60,130,210}
+\definecolor{ch1}{RGB}{225,120,50}
+\definecolor{ch2}{HTML}{27AE60}

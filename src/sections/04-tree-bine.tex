@@ -283,12 +283,13 @@ These protocols have no zero-copy path, so \texttt{directRecvReduceCopy} had to 
 \end{algorithmic}
 \end{algorithm}
 
-\begin{table}[t]
+\begin{table}[H]
 \centering
-\small
+\footnotesize
+\setlength{\tabcolsep}{4pt}
 \caption{\nccl{} operations used by the Bine broadcast and reduce. The direct operation is used when the zero-copy path is available.}
 \label{tab:bine-bcast-calls}
-\begin{tabular}{@{}lllll@{}}
+\begin{tabularx}{\linewidth}{@{}l X c l l@{}}
 \toprule
  & Role & Fan & Direct & Otherwise \\
 \midrule
@@ -301,7 +302,7 @@ Reduce & Receive from a child (first or later) & $\langle1,0\rangle$ & \texttt{d
  & Send to the parent, leaf & $\langle0,1\rangle$ & \texttt{directSend} & \texttt{send} \\
  & Send to the parent, after a receive & $\langle0,1\rangle$ & \texttt{directSendFromOutput} & \texttt{sendFromOutput} \\
 \bottomrule
-\end{tabular}
+\end{tabularx}
 \end{table}
 
 %==============================================================================

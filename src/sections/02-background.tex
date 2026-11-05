@@ -23,7 +23,8 @@ Several collectives are related: the allreduce can be obtained as a reduce-scatt
 
 \paragraph{Cost model.}
 To compare algorithms we use the usual latency--bandwidth model~\cite{hockney1994communication,thakur2005optimization}.
-Sending a message of $m$ bytes between two ranks takes $\alpha+m\beta$, where $\alpha$ is the latency (including transmission setup overhead) and $\beta$ the time to transfer one byte, i.e., $\mathrm{bandwidth} = 1/\beta$, and combining $m$ bytes locally takes $m\gamma$.
+Sending a message of $m$ bytes between two ranks takes $\alpha+m\beta$, where $\alpha$ is the latency (including transmission setup overhead) and $\beta$ the time to transfer one byte, i.e., $\mathrm{bandwidth} = 1/\beta$.
+Let $\gamma$ be the cost of aggregating (reducing) two bytes, i.e., the time to apply the reduction operator to one byte from each of two operands; reducing two vectors of $m$ bytes locally therefore takes $m\gamma$.
 Algorithms proceed in \emph{steps}, and at each step a rank sends at most one message and receives at most one.
 The model ignores the topology of the network: all the pairs of ranks are assumed to be at the same distance.
 This is precisely the assumption that the Bine tree relaxes (Sec.~\ref{sec:bg-bine}).

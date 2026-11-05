@@ -19,15 +19,15 @@ The operations considered in this thesis are the following.
   \item[Allreduce.] Like the reduce, but every rank obtains the result.
 \end{description}
 The combination operator is assumed to be associative and commutative, as it is for the operators supported by \nccl{} (sum, product, maximum, minimum, average).
-Several collectives are related: the allreduce can be obtained as a reduce-scatter followed by an allgather, and the broadcast as a scatter followed by an allgather.
+Several collectives are related: the allreduce can be obtained as a reduce-scatter followed by an allgather or as a Reduce followed by a Broadcast, and the broadcast as a scatter followed by an allgather.
 
 \paragraph{Cost model.}
 To compare algorithms we use the usual latency--bandwidth model~\cite{hockney1994communication,thakur2005optimization}.
-Sending a message of $m$ bytes between two ranks takes $\alpha+m\beta$, where $\alpha$ is the latency and $\beta$ the time to transfer one byte, and combining $m$ bytes locally takes $m\gamma$.
+Sending a message of $m$ bytes between two ranks takes $\alpha+m\beta$, where $\alpha$ is the latency (including transmission setup overhead) and $\beta$ the time to transfer one byte, i.e., $\mathrm{bandwidth} = 1/\beta$, and combining $m$ bytes locally takes $m\gamma$.
 Algorithms proceed in \emph{steps}, and at each step a rank sends at most one message and receives at most one.
 The model ignores the topology of the network: all the pairs of ranks are assumed to be at the same distance.
 This is precisely the assumption that the Bine tree relaxes (Sec.~\ref{sec:bg-bine}).
-Table~\ref{tab:notation} summarizes the notation.
+Table~\ref{tab:notation} summarizes the notation we will see all throughout this thesis.
 
 \begin{table}[t]
 \centering
@@ -96,6 +96,7 @@ The bandwidth term is optimal: every rank sends and receives a number of bytes t
 \paragraph{Broadcast and reduce.}
 The ring can also be used for the broadcast and the reduce by pipelining.
 The vector is split in $k$ chunks that travel along the ring starting from the root: after the first chunk has reached the last rank, a new chunk is delivered at every step.
+Figure~\ref{fig:bg-ring-links} illustrates the difference in link usage on a ring of $p=3$ ranks: without pipelining (Figure~\ref{fig:bg-ring-nopipe}) the whole vector hops from rank to rank and only one link is busy per step, whereas with pipelining (Figure~\ref{fig:bg-ring-pipe}) the chunks follow each other and all links transfer data concurrently.
 The broadcast takes $p+k-2$ steps of $n/k$ bytes each,
 \begin{equation}
   T_{\text{broadcast}} = (p+k-2)\Bigl(\alpha+\tfrac{n}{k}\beta\Bigr),
@@ -104,11 +105,74 @@ The broadcast takes $p+k-2$ steps of $n/k$ bytes each,
 and the reduce is the same pattern in the opposite direction, with an additional $\tfrac{n}{k}\gamma$ per step.
 For a large $k$ the bandwidth term tends to $n\beta$, independently of $p$, but the latency term grows linearly with the number of ranks, and chunks cannot be made arbitrarily small without paying $\alpha$ for each of them.
 
+\begin{figure}[H]
+  \centering
+  \begin{subfigure}[b]{\linewidth}
+    \centering
+    \ringpic{step 1}{chunkA}{idle}{idle}\hfill
+    \ringpic{step 2}{idle}{chunkA}{idle}\hfill
+    \ringpic{step 3}{idle}{idle}{chunkA}
+    \caption{Without pipelining: the whole vector hops from rank to rank,
+             so only one link is busy per step.}
+    \label{fig:bg-ring-nopipe}
+  \end{subfigure}
+
+  \vspace{1.5em}
+
+  \begin{subfigure}[b]{\linewidth}
+    \centering
+    \ringpic{step 1}{chunkA}{chunkB}{chunkC}\hfill
+    \ringpic{step 2}{chunkC}{chunkA}{chunkB}\hfill
+    \ringpic{step 3}{chunkB}{chunkC}{chunkA}
+    \caption{With pipelining: the vector is split in three chunks (green, yellow,
+             blue) that follow each other, so all links are busy at every step.}
+    \label{fig:bg-ring-pipe}
+  \end{subfigure}
+  \caption{Link usage on a ring of $p=3$ ranks. Arrows are links coloured by the
+           chunk they carry; grey links are idle.}
+  \label{fig:bg-ring-links}
+\end{figure}
+
 \paragraph{Locality.}
 Since each rank communicates only with its two neighbours, a ring whose ranks are mapped consecutively on the machine uses very few long-distance links.
-For example, on a network organized in groups, only two of the $p$ messages sent at each step cross a group boundary for every boundary~\cite{desensi2025bine}.
+For example, on a network organized in groups, only two of the $p$ messages sent at each step cross a group boundary for every boundary~\cite{desensi2025bine} (Figure~\ref{fig:bg-ring-locality}).
 This is why the ring is competitive for large vectors even on oversubscribed networks.
 Its weakness is the number of steps: the performance is suboptimal for large numbers of ranks and small to medium vectors~\cite{desensi2025bine}, where the latency term $\bigO{p}\,\alpha$ dominates.
+
+\begin{figure}[H]
+  \centering
+  \begin{tikzpicture}[
+      rank/.style={circle, draw, minimum size=0.6cm, inner sep=0pt, fill=white,
+                   font=\footnotesize},
+      lnk/.style={-{Stealth[length=2mm]}, line width=1.6pt,
+                  shorten >=1pt, shorten <=1pt},
+      local/.style={lnk, gray!60},
+      cross/.style={lnk, crosslink},
+      group/.style={rounded corners=3pt, draw=black!60, fill=black!5,
+                    inner sep=6pt}]
+    % ranks, mapped consecutively
+    \foreach \i/\x in {0/0, 1/1.1, 2/2.2, 3/3.3, 4/5.3, 5/6.4, 6/7.5, 7/8.6}
+      \node[rank] (r\i) at (\x,0) {\i};
+
+    % groups
+    \begin{scope}[on background layer]
+      \node[group, fit=(r0)(r3), label={[font=\footnotesize]above:Group A}] (gA) {};
+      \node[group, fit=(r4)(r7), label={[font=\footnotesize]above:Group B}] (gB) {};
+    \end{scope}
+
+    % links inside a group
+    \foreach \i/\j in {0/1, 1/2, 2/3, 4/5, 5/6, 6/7}
+      \draw[local] (r\i) -- (r\j);
+
+    % links crossing a group boundary
+    \draw[cross] (r3) -- (r4);
+    \draw[cross] (r7.south) -- ++(0,-1.1) -| (r0.south);
+  \end{tikzpicture}
+  \caption{Ring with ranks mapped consecutively on a network organized in two groups.
+           Grey links stay inside a group; only the links between the endpoints of
+           the groups (red) cross a group boundary.}
+  \label{fig:bg-ring-locality}
+\end{figure}
 
 %------------------------------------------------------------------------------
 \subsection{Binomial tree}\label{sec:bg-tree}
@@ -127,15 +191,15 @@ For the collectives that include a computation (e.g., the reduce) this requires 
 The root first sends the vector to one rank.
 Then, at each step, every rank that already holds the data sends it to a rank that does not, so that the number of ranks holding the data doubles at each step and the broadcast completes in $s=\log_2 p$ steps.
 The algorithm is correct for any choice of the destinations, as long as a rank never sends to a rank that already has the data, but different choices give different trees.
-The two standard ones differ in the distance between the ranks that communicate, where the distance between $r$ and $q$ is $|r-q|$.
+The two standard ones differ in the \emph{logical distance} between the ranks that communicate, defined as $|r-q|$ for ranks $r$ and $q$, which depends only on the rank numbering and makes no assumption on the network topology or on how ranks are allocated on the machine.
 Let $r'=(r-t)\bmod p$ be the rank relative to the root $t$.
 \begin{itemize}
-  \item In the \emph{distance-doubling} tree, used for example by Open MPI~\cite{desensi2025bine}, at step $i$ rank $r'$ sends to $r'\oplus2^{i}$, so the distance doubles at every step: $1,2,4,\dots,p/2$. A rank $r'\neq0$ receives at the step given by the position of its most significant set bit.
-  \item In the \emph{distance-halving} tree, used for example by MPICH~\cite{desensi2025bine}, at step $i$ rank $r'$ sends to $r'\oplus2^{s-i-1}$, so the distance halves at every step: $p/2,\dots,2,1$. A rank $r'\neq0$ receives at the step $s-1-\nu$, where $\nu$ is the position of its least significant set bit.
+  \item In the \emph{distance-doubling} tree, used for example by Open MPI~\cite{desensi2025bine}, at step $i$ rank $r'$ sends to $r'\oplus2^{i}$, so the logical distance doubles at every step: $1,2,4,\dots,p/2$. A rank $r'\neq0$ receives at the step given by the position of its most significant set bit.
+  \item In the \emph{distance-halving} tree, used for example by MPICH~\cite{desensi2025bine}, at step $i$ rank $r'$ sends to $r'\oplus2^{s-i-1}$, so the logical distance halves at every step: $p/2,\dots,2,1$. A rank $r'\neq0$ receives at the step $s-1-\nu$, where $\nu$ is the position of its least significant set bit.
 \end{itemize}
 Figure~\ref{fig:bg-binomial} shows the distance-halving tree for $p=8$ and $t=0$.
 Rank $0$ sends to $4$, $2$, $1$ at steps $0$, $1$, $2$; rank $4$ sends to $6$ and $5$ at steps $1$ and $2$; rank $2$ sends to $3$ at step $2$; and rank $6$ sends to $7$ at step $2$.
-The distance-halving tree is the one the thesis compares against, because it is the one that the Bine tree modifies.
+We focus on the distance-halving tree, which typically performs better when combined with \bine{} and is the only variant implemented in this thesis.
 
 \begin{figure}[t]
   \centering
@@ -179,7 +243,7 @@ In the broadcast and in the reduce, every edge carries the whole vector, so
 while the scatter and the gather take $s\,\alpha+\tfrac{p-1}{p}n\beta$.
 Table~\ref{tab:bg-cost} compares them with the ring.
 The tree has a logarithmic latency term, which makes it the better choice for small and medium vectors and large $p$.
-Its bandwidth term is $s\,n\beta$, i.e., it grows with $p$, while the one of the pipelined ring does not, so for large vectors the ring wins.
+Its bandwidth term is $s\,n\beta$, i.e., it grows with $p$, while the one of the pipelined ring does not, so for large vectors the ring tipically performs better.
 The same trade-off appears in the measurements of Chapter~\ref{ch:tree}.
 
 \begin{table}[t]
@@ -207,11 +271,52 @@ Binomial trees can be adapted to any $p$ by running the algorithm on the $p'=2^{
 \paragraph{Communication locality.}
 The cost model of Table~\ref{tab:bg-cost} assumes that all pairs of ranks are equally distant, but on a real machine this is not true.
 The two trees above have the same number of steps and the same total volume of data, but they can generate a very different traffic on the slow links~\cite{desensi2025bine}.
-Consider a broadcast of $n$ bytes over eight nodes connected through a $2{:}1$ oversubscribed fat tree, where each leaf switch serves two consecutive ranks, i.e., $\{0,1\},\{2,3\},\{4,5\},\{6,7\}$, and the uplinks are the bottleneck.
-In the distance-doubling tree, the transfers at the second and third steps ($0\to2$ and $1\to3$; then $0\to4$, $1\to5$, $2\to6$, $3\to7$) all cross the uplinks, for a total of $2n+4n=6n$ bytes, and the two transfers of the second step even share the uplink of the first switch.
-In the distance-halving tree, only $0\to4$ ($n$ bytes) and $0\to2$, $4\to6$ ($2n$ bytes) cross the uplinks, for $3n$ bytes in total, and the last step, which is the one with the most transfers, is entirely local.
+Consider a broadcast of $n$ bytes over eight nodes connected through a $2{:}1$ oversubscribed fat tree, where each leaf switch serves two consecutive ranks, i.e., $\{0,1\},\{2,3\},\{4,5\},\{6,7\}$, and the uplinks are the bottleneck (Fig.~\ref{fig:bg-locality}).
+In the distance-doubling tree (Fig.~\ref{fig:bg-locality-doubling}), the transfers at the second and third steps ($0\to2$ and $1\to3$; then $0\to4$, $1\to5$, $2\to6$, $3\to7$) all cross the uplinks, for a total of $2n+4n=6n$ bytes, and the two transfers of the second step even share the uplink of the first switch.
+In the distance-halving tree (Fig.~\ref{fig:bg-locality-halving}), only $0\to4$ ($n$ bytes) and $0\to2$, $4\to6$ ($2n$ bytes) cross the uplinks, for $3n$ bytes in total, and the last step, which is the one with the most transfers, is entirely local.
 The intuition is that closer communication should be preferred when more ranks are sending.
 This example also assumes that rank identifiers are close to the physical position of the ranks, which holds when the ranks are mapped consecutively on the machine (e.g., under the default block distribution of Slurm).
+
+\begin{figure}[H]
+  \centering
+  \begin{subfigure}[b]{\linewidth}
+    \centering
+    \fattree{
+      \xf{r0}{r1}{local}{1}
+      \xf{r0}{r2}{cross}{2}
+      \xf{r1}{r3}{cross}{2}
+      \xf{r0}{r4}{cross}{3}
+      \xf{r1}{r5}{cross}{3}
+      \xf{r2}{r6}{cross}{3}
+      \xf{r3}{r7}{cross}{3}
+    }
+    \caption{Distance-doubling: steps 2 and 3 cross the uplinks, for $2n+4n=6n$ bytes.}
+    \label{fig:bg-locality-doubling}
+  \end{subfigure}
+
+  \vspace{1.5em}
+
+  \begin{subfigure}[b]{\linewidth}
+    \centering
+    \fattree{
+      \xf{r0}{r4}{cross}{1}
+      \xf{r0}{r2}{cross}{2}
+      \xf{r4}{r6}{cross}{2}
+      \xf{r0}{r1}{local}{3}
+      \xf{r2}{r3}{local}{3}
+      \xf{r4}{r5}{local}{3}
+      \xf{r6}{r7}{local}{3}
+    }
+    \caption{Distance-halving: only steps 1 and 2 cross the uplinks, for $n+2n=3n$ bytes,
+             and the last step is entirely local.}
+    \label{fig:bg-locality-halving}
+  \end{subfigure}
+  \caption{Broadcast from rank 0 over eight ranks on a 2:1 oversubscribed fat tree, where
+           each leaf switch serves two consecutive ranks. Arcs are transfers labelled with
+           their step; red arcs cross the (bottleneck) uplinks, green arcs stay under a
+           single leaf switch.}
+  \label{fig:bg-locality}
+\end{figure}
 
 %------------------------------------------------------------------------------
 \subsection{Ring versus tree: $\bigO{p}$ versus $\bigO{\log p}$}\label{sec:bg-ring-vs-tree}
@@ -267,7 +372,7 @@ The model also ignores the network topology, which is where the Bine tree differ
 
 \bine{} (\emph{binomial negabinary}) trees are a family of binomial-tree algorithms that reduce the distance between the ranks that communicate, and so the amount of data that crosses the slow links of the network~\cite{desensi2025bine}.
 They keep the generality of binomial trees: they have the same number of steps, the same number of messages and the same communication cost in the model of Sec.~\ref{sec:bg-collectives}, they do not need to know the topology or the way the ranks are allocated, and their schedule is computed from the rank identifiers alone, with the same simplicity.
-In this thesis we only use the distance-halving Bine tree, which we describe in this section; the distance-doubling variant belongs to the butterfly algorithms (Sec.~\ref{sec:bg-bine-butterfly}).
+In this thesis we only use the distance-halving Bine tree, which we describe in this section.
 
 \paragraph{Modular distance.}
 A standard binomial tree does not use the physical distance between nodes, which would tie the algorithm to a specific machine, but the difference between the rank identifiers.
@@ -401,8 +506,7 @@ Since for a binomial tree the maximum distance between two ranks is $p/2$, the d
   \approx\frac{2^{s-i}/3}{2^{s-i-1}}=\frac{2}{3}.
   \label{eq:bg-distance-ratio}
 \end{equation}
-Asymptotically, communicating ranks are therefore at a modular distance about one third shorter; for the small step sizes of Table~\ref{tab:bg-distance} the reduction ranges between $25\%$ and $50\%$..
-The distances do not halve exactly at each step, but they differ by at most one from the ideal halving.
+Asymptotically, communicating ranks are therefore at a modular distance about one third shorter; for the small step sizes of Table~\ref{tab:bg-distance} the reduction ranges between $25\%$ and $50\%$.
 
 \begin{table}[t]
 \centering

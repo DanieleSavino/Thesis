@@ -6,6 +6,8 @@
 \usepackage[utf8]{inputenc}
 \usepackage{microtype}
 \usepackage{csquotes}          % required by biblatex for proper quoting
+\usepackage{tikz}
+\usepackage{subcaption}
 
 % ---------------------------------------------------------------------------
 % Math, figures, tables, code
@@ -71,3 +73,67 @@
 \newcommand{\Send}{\mathcal{S}}
 \newcommand{\Recv}{\mathcal{R}}
 \newcommand{\none}{\bot}
+
+\usetikzlibrary{arrows.meta, fit, backgrounds}
+\definecolor{crosslink}{RGB}{200,40,40}
+\definecolor{localxfer}{RGB}{60,150,70}
+
+\definecolor{chunkA}{RGB}{60,170,70}   % chunk 1 (green)
+\definecolor{chunkB}{RGB}{240,200,40}  % chunk 2 (yellow)
+\definecolor{chunkC}{RGB}{50,110,220}  % chunk 3 (blue)
+\colorlet{idle}{gray!35}
+
+% \ringpic{label}{color 0->1}{color 1->2}{color 2->0}
+\newcommand{\ringpic}[4]{%
+  \begin{tikzpicture}[baseline=(lab.north),
+      rank/.style={circle, draw, minimum size=0.65cm, inner sep=0pt, fill=white},
+      lnk/.style={-{Stealth[length=2.5mm]}, line width=2.2pt,
+                  shorten >=1pt, shorten <=1pt}]
+    \node[rank] (r0) at (90:1.1)   {0};
+    \node[rank] (r1) at (-30:1.1)  {1};
+    \node[rank] (r2) at (210:1.1)  {2};
+    \draw[lnk, #2] (r0) -- (r1);
+    \draw[lnk, #3] (r1) -- (r2);
+    \draw[lnk, #4] (r2) -- (r0);
+    \node (lab) at (0,-1.9) {#1};
+  \end{tikzpicture}%
+}
+
+% \xf{from}{to}{style}{step}: transfer drawn as an arc below the ranks
+\newcommand{\xf}[4]{%
+  \draw[#3] (#1.south) to[out=-90, in=-90, looseness=1.1]
+       node[st, pos=0.5] {#4} (#2.south);}
+
+% \fattree{transfers}: 8 ranks, 4 leaf switches, 1 spine
+\newcommand{\fattree}[1]{%
+  \begin{tikzpicture}[x=1.25cm, y=1cm,
+      rank/.style={circle, draw, minimum size=0.65cm, inner sep=0pt,
+                   fill=white, font=\footnotesize},
+      sw/.style={rectangle, rounded corners=2pt, draw=black!70, fill=black!8,
+                 minimum width=1.6cm, minimum height=0.5cm, inner sep=0pt,
+                 font=\scriptsize},
+      wire/.style={draw=black!40, line width=0.8pt},
+      uplink/.style={draw=black!35, line width=2pt},
+      xfer/.style={-{Stealth[length=2.2mm]}, shorten >=1pt},
+      local/.style={xfer, localxfer, line width=1.6pt},
+      cross/.style={xfer, crosslink, line width=1.6pt},
+      st/.style={circle, fill=white, inner sep=1pt, font=\scriptsize\bfseries}]
+    % ranks
+    \foreach \i in {0,...,7} \node[rank] (r\i) at (\i,0) {\i};
+    % leaf switches
+    \foreach \j in {0,...,3} {
+      \pgfmathtruncatemacro{\a}{2*\j}
+      \pgfmathtruncatemacro{\b}{2*\j+1}
+      \node[sw] (l\j) at (2*\j+0.5,1.4) {leaf};
+      \draw[wire] (r\a) -- (l\j);
+      \draw[wire] (r\b) -- (l\j);
+    }
+    % spine and uplinks
+    \node[sw, minimum width=2.6cm] (sp) at (3.5,2.9) {spine};
+    \foreach \j in {0,...,3} \draw[uplink] (l\j) -- (sp);
+    % reserve space below the ranks for the arcs
+    \path (0,-2.5);
+    % transfers
+    #1
+  \end{tikzpicture}%
+}

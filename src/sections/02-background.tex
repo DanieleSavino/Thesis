@@ -368,6 +368,119 @@ The model also ignores the network topology, which is where the Bine tree differ
 %------------------------------------------------------------------------------
 \subsection{Butterfly}\label{sec:bg-butterfly}
 
+Here, \emph{butterfly} means the standard (recursive doubling and halving) butterfly, not its \bine{} variant (Sec.~\ref{sec:bg-bine-butterfly}).
+Unlike the tree, where the ranks that already hold the data are the only ones sending, in a butterfly all the ranks are active at every step, and at each step they are paired and exchange data with their partner.
+This makes it the natural pattern for the collectives in which every rank contributes to and receives the result, i.e., the allgather, the reduce-scatter and the allreduce.
+
+\paragraph{Construction.}
+Let $p=2^s$.
+At step $i\in[0,s-1]$ rank $r$ exchanges a message with its partner, i.e., it sends one message and receives one from the same rank, as allowed by the model of Sec.~\ref{sec:bg-collectives}.
+As for the binomial tree, there are two standard choices, which differ in the logical distance between the partners (Fig.~\ref{fig:bg-butterfly}).
+\begin{itemize}
+  \item In the \emph{distance-doubling} butterfly (also called recursive doubling), at step $i$ rank $r$ exchanges with $r\oplus2^{i}$, so the logical distance is $1,2,4,\dots,p/2$.
+  \item In the \emph{distance-halving} butterfly (also called recursive halving), at step $i$ rank $r$ exchanges with $r\oplus2^{s-i-1}$, so the logical distance is $p/2,\dots,2,1$.
+\end{itemize}
+In both cases, after the $s$ steps every rank has been, directly or indirectly, connected with all the others: the $p$ ranks and the $s$ steps form the $p\times s$ grid of a butterfly network, and the ranks reached by a rank at steps $0,\dots,i$ are $2^{i+1}$.
+Unlike the binomial tree, the pattern is symmetric, since every edge is used in both directions, and it contains $p/2$ edges per step instead of at most $p/2$ on the last step only.
+
+\begin{figure}[t]
+  \centering
+  \begin{tikzpicture}[
+      rank/.style={circle,draw,minimum size=6mm,inner sep=0pt,font=\footnotesize,fill=white},
+      st0/.style={thick},
+      lab/.style={font=\footnotesize}]
+    \foreach \i in {0,...,3}{
+      \foreach \r in {0,...,7}{
+        \node[rank] (c\i-\r) at (2.2*\i,-0.8*\r) {\r};
+      }
+    }
+    % step 0: distance 4
+    \foreach \a/\b in {0/4,1/5,2/6,3/7}{
+      \draw[st0] (c0-\a) -- (c1-\b);
+      \draw[st0] (c0-\b) -- (c1-\a);
+    }
+    % step 1: distance 2
+    \foreach \a/\b in {0/2,1/3,4/6,5/7}{
+      \draw[st0] (c1-\a) -- (c2-\b);
+      \draw[st0] (c1-\b) -- (c2-\a);
+    }
+    % step 2: distance 1
+    \foreach \a/\b in {0/1,2/3,4/5,6/7}{
+      \draw[st0] (c2-\a) -- (c3-\b);
+      \draw[st0] (c2-\b) -- (c3-\a);
+    }
+    \foreach \i/\t in {0/{start},1/{after step 0},2/{after step 1},3/{after step 2}}
+      \node[lab] at (2.2*\i,0.7) {\t};
+  \end{tikzpicture}
+  \caption{Distance-halving butterfly over $p=8$ ranks. Each column is the set of ranks between two steps. The partners are at distance $4$, $2$ and $1$ at steps $0$, $1$ and $2$. The distance-doubling butterfly is obtained by using the three steps in the opposite order.}
+  \label{fig:bg-butterfly}
+\end{figure}
+
+\paragraph{Allgather.}
+Each rank starts with its block of $n/p$ bytes.
+At each step it sends to its partner all the blocks it holds and receives those of the partner, so that the number of blocks held doubles at every step and, after $s$ steps, every rank holds all of them.
+At step $i$ the message size is therefore $2^{i}\,n/p$ bytes with distance-doubling, and $2^{s-i-1}\,n/p$ with distance-halving (a distance-halving allgather first exchanges single blocks with the farthest rank).
+With distance-doubling the blocks held by a rank are always contiguous, while with distance-halving they are spaced with a stride and must be either sent as separate pieces or reordered.
+
+\paragraph{Reduce-scatter.}
+The reduce-scatter is the allgather run in reverse.
+At every step a rank splits the vector it currently holds in two halves, sends to its partner the half that contains the blocks for the ranks of the partner's side, receives the corresponding half from the partner and combines it with its own.
+The vector halves at every step, so the message sizes are $n/2,n/4,\dots,n/p$ bytes, and after $s$ steps rank $r$ holds the $r$-th block of the result.
+With distance-halving, the blocks to send are contiguous and no reordering is needed, whereas distance-doubling requires the same reordering described above.
+
+\paragraph{Allreduce.}
+There are two ways to implement the allreduce on a butterfly.
+For large vectors, the allreduce is a reduce-scatter followed by an allgather~\cite{thakur2005optimization}, so the algorithm is both bandwidth-optimal and has a logarithmic latency term.
+For small vectors, at each step the ranks exchange and combine the whole vector: in this case there are $s$ steps with a message of $n$ bytes each, which is the same number of steps and bytes as a tree reduce followed by a tree broadcast, with half the steps.
+
+\paragraph{Cost.}
+In the model of Sec.~\ref{sec:bg-collectives}, summing the message sizes of the steps gives $\sum_{i=0}^{s-1}2^{i}\,n/p=\tfrac{p-1}{p}\,n$, so that
+\begin{align}
+  T_{\text{allgather}} &= s\,\alpha+\tfrac{p-1}{p}\,n\beta,\\
+  T_{\text{reduce-scatter}} &= s\,\alpha+\tfrac{p-1}{p}\,n\beta+\tfrac{p-1}{p}\,n\gamma,\\
+  T_{\text{allreduce}} &= 2s\,\alpha+2\tfrac{p-1}{p}\,n\beta+\tfrac{p-1}{p}\,n\gamma,
+  \label{eq:bg-butterfly-allreduce}
+\end{align}
+while the variant of the allreduce that exchanges the whole vector costs $s\,(\alpha+n\beta+n\gamma)$.
+Table~\ref{tab:bg-butterfly-cost} compares these costs with the ring.
+The bandwidth and reduction terms are the same as the ring ones, hence optimal, but the latency term is $s\,\alpha$ instead of $(p-1)\alpha$.
+For $p$ a power of two, the butterfly is therefore never worse than the ring in this model.
+The vector is however split in $p$ blocks, so for small vectors the messages of the last steps become tiny and the latency dominates anyway.
+
+\begin{table}[t]
+\centering
+\small
+\caption{Cost of the ring and of the butterfly algorithms ($p=2^s$). For the allreduce, the butterfly row is the reduce-scatter followed by the allgather.}
+\label{tab:bg-butterfly-cost}
+\begin{tabular}{@{}lll@{}}
+\toprule
+Collective & Ring & Butterfly \\
+\midrule
+Allgather & $(p-1)\alpha+\tfrac{p-1}{p}n\beta$ & $s\,\alpha+\tfrac{p-1}{p}n\beta$ \\
+Reduce-scatter & $(p-1)\alpha+\tfrac{p-1}{p}n\beta+\tfrac{p-1}{p}n\gamma$ & $s\,\alpha+\tfrac{p-1}{p}n\beta+\tfrac{p-1}{p}n\gamma$ \\
+Allreduce & $2(p-1)\alpha+2\tfrac{p-1}{p}n\beta+\tfrac{p-1}{p}n\gamma$ & $2s\,\alpha+2\tfrac{p-1}{p}n\beta+\tfrac{p-1}{p}n\gamma$ \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\paragraph{Number of ranks not a power of two.}
+As for the binomial tree, the butterfly is adapted to any $p$ by running the algorithm on the $p'=2^{\lfloor\log_2p\rfloor}$ ranks.
+Before the butterfly, each of the $p-p'$ remaining ranks sends its data to one rank of the first group, which combines it with its own (reduce-scatter and allreduce) or keeps it (allgather); after the butterfly, the result is sent back~\cite{thakur2005optimization}.
+This adds up to two steps in which $n$ bytes are transferred, and part of the ranks are idle during the butterfly.
+
+\paragraph{Communication locality.}
+As for the tree, the cost model ignores the topology, but the order of the steps changes how much data crosses the slow links.
+Consider the reduce-scatter on the $2{:}1$ oversubscribed fat tree of Fig.~\ref{fig:bg-locality}, where each leaf switch serves two consecutive ranks.
+With distance-halving, the partners at step $0$ are at distance $4$, and all the $8$ ranks send $n/2$ bytes across the uplinks; at step $1$ the partners are at distance $2$ and the ranks send $n/4$ bytes across the uplinks again; only the last step, with $n/8$ bytes, is local.
+In total $8\,(n/2+n/4)=6n$ bytes cross the uplinks.
+With distance-doubling the order is reversed: the largest message, $n/2$, is exchanged between ranks under the same switch, and only $8\,(n/4+n/8)=3n$ bytes cross the uplinks.
+The allgather is symmetric, and for it distance-halving is the better choice.
+The intuition is the opposite of the one of the tree: here the amount of data per message, rather than the number of senders, changes along the steps, and the closest communication should be used when the messages are the largest.
+Both orders send the same number of bytes and have the same cost in the model, but the one that is better for locality requires non-contiguous blocks.
+In both orders, every rank sends across a group boundary at the steps in which its partner is far, so in a network organized in groups a butterfly sends at most as much data across the global links as it does in total, whereas the ring sends only $2$ messages per boundary at each step (Fig.~\ref{fig:bg-ring-locality}).
+This is why the butterfly is preferable for small and medium vectors and large $p$, where the latency term dominates, while for large vectors the ring can still be competitive on oversubscribed networks~\cite{desensi2025bine}.
+The Bine butterfly (Sec.~\ref{sec:bg-bine-butterfly}) reduces the distance between the partners in the same way as the Bine tree does for the binomial one.
+
 %------------------------------------------------------------------------------
 \subsection{Bine trees}\label{sec:bg-bine}
 

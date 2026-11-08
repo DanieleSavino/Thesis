@@ -646,4 +646,165 @@ The implementation of this thesis is limited to powers of two (Chapter~\ref{ch:t
 
 %------------------------------------------------------------------------------
 \subsection{Bine butterflies}\label{sec:bg-bine-butterfly}
-\todo{Afer Butterfly implementation (ch. 05)}
+
+\bine{} butterflies apply to the butterfly the same idea that \bine{} trees apply to the binomial tree: the partners are chosen to minimize the modular distance (Sec.~\ref{sec:bg-bine}), while the number of steps, the number of messages and the cost in the model of Sec.~\ref{sec:bg-collectives} are those of the standard butterfly~\cite{desensi2025bine}.
+They are as generic as \bine{} trees: the schedule depends only on the rank identifiers and does not require any knowledge of the topology or of the allocation.
+
+\paragraph{Construction.}
+A distance-halving butterfly can be seen as the superposition of distance-halving trees, each rooted at a different rank (e.g., in the allgather, the block of rank $r$ travels along the tree rooted at $r$).
+A \bine{} butterfly is obtained by superposing \bine{} trees, with the constraint that the choices of all the ranks are consistent: if rank $r$ communicates with rank $q$ at a step, then $q$ communicates with $r$ at the same step.
+We start from the distance-halving \bine{} tree rooted at rank $0$ and derive the other ranks from it.
+
+\paragraph{Communication partner.}
+By Eq.~\eqref{eq:partner}, at step $i\in[0,s-1]$ rank $0$ communicates with the rank whose negabinary representation has the $s-i$ least significant bits set to one and the others set to zero, that is, with rank $\tau_i \bmod p$, where
+\begin{equation}
+  \tau_i=\sum_{j=0}^{s-i-1}(-2)^j=\frac{1-(-2)^{s-i}}{3}.
+  \label{eq:bg-bine-tau}
+\end{equation}
+Every even rank $r$ behaves as rank $0$ rotated by $r$ positions.
+Since $\tau_i$ is odd (all its terms but the first are even), an even rank always communicates with an odd one, and the odd ranks behave in the mirrored way, with the opposite sign.
+The partner of rank $r$ at step $i$ is therefore
+\begin{equation}
+  \pi_i(r)=
+  \begin{cases}
+    (r+\tau_i)\bmod p & \text{if $r$ is even},\\
+    (r-\tau_i)\bmod p & \text{if $r$ is odd}.
+  \end{cases}
+  \label{eq:bg-bine-bfly-partner}
+\end{equation}
+The choice is consistent, since if $r$ is even then $q=\pi_i(r)$ is odd and $\pi_i(q)=q-\tau_i=r$ (and symmetrically if $r$ is odd).
+For $p=8$, $\tau_0=3$, $\tau_1=-1$ and $\tau_2=1$, which gives the partners of Table~\ref{tab:bg-bine-bfly-p8} and the pattern of Fig.~\ref{fig:bg-bine-butterfly}.
+Rank $0$ communicates with $3$, $7$ and $1$, as in the \bine{} tree of Fig.~\ref{fig:bg-bine-circle}.
+
+\begin{table}[t]
+\centering
+\small
+\caption{Partner $\pi_i(r)$ of rank $r$ at step $i$ in the distance-halving \bine{} butterfly with $p=8$ ($\tau_0=3$, $\tau_1=-1$, $\tau_2=1$).}
+\label{tab:bg-bine-bfly-p8}
+\begin{tabular}{@{}l*{8}{c}@{}}
+\toprule
+$r$ & 0 & 1 & 2 & 3 & 4 & 5 & 6 & 7 \\
+\midrule
+$i=0$ & 3 & 6 & 5 & 0 & 7 & 2 & 1 & 4 \\
+$i=1$ & 7 & 2 & 1 & 4 & 3 & 6 & 5 & 0 \\
+$i=2$ & 1 & 0 & 3 & 2 & 5 & 4 & 7 & 6 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{figure}[t]
+  \centering
+  \begin{tikzpicture}[
+      rank/.style={circle,draw,minimum size=6mm,inner sep=0pt,font=\footnotesize,fill=white},
+      lab/.style={font=\footnotesize}]
+    \foreach \i in {0,...,3}{
+      \foreach \r in {0,...,7}{
+        \node[rank] (d\i-\r) at (2.2*\i,-0.8*\r) {\r};
+      }
+    }
+    % step 0: tau = 3
+    \foreach \a/\b in {0/3,2/5,4/7,1/6}{
+      \draw[thick] (d0-\a) -- (d1-\b);
+      \draw[thick] (d0-\b) -- (d1-\a);
+    }
+    % step 1: tau = -1
+    \foreach \a/\b in {0/7,1/2,3/4,5/6}{
+      \draw[thick] (d1-\a) -- (d2-\b);
+      \draw[thick] (d1-\b) -- (d2-\a);
+    }
+    % step 2: tau = 1
+    \foreach \a/\b in {0/1,2/3,4/5,6/7}{
+      \draw[thick] (d2-\a) -- (d3-\b);
+      \draw[thick] (d2-\b) -- (d3-\a);
+    }
+    \foreach \i/\t in {0/{start},1/{after step 0},2/{after step 1},3/{after step 2}}
+      \node[lab] at (2.2*\i,0.7) {\t};
+  \end{tikzpicture}
+  \caption{Distance-halving \bine{} butterfly over $p=8$ ranks. The partners are at modular distance $3$, $1$ and $1$ at steps $0$, $1$ and $2$ (against $4$, $2$ and $1$ for the standard butterfly of Fig.~\ref{fig:bg-butterfly}). The distance-doubling \bine{} butterfly uses the same three steps in the opposite order.}
+  \label{fig:bg-bine-butterfly}
+\end{figure}
+
+\paragraph{Distance-halving and distance-doubling.}
+As for the standard butterfly, the steps can be executed in the opposite order, which gives the distance-doubling \bine{} butterfly: at step $i$ rank $r$ communicates with $\pi_{s-1-i}(r)$, so that the distance between partners grows with $i$.
+The order is chosen as for the standard butterfly (Sec.~\ref{sec:bg-butterfly}): distance-halving is preferable for the collectives in which the messages grow at each step (the allgather), and distance-doubling when the largest messages are exchanged in the first steps (the reduce-scatter)~\cite{desensi2025bine}.
+
+\paragraph{Distance reduction.}
+In both orders, the distance between partners at a step is the one of the \bine{} tree, $\delta_{\text{bine}}=\lvert\tau_i\rvert\approx 2^{s-i}/3$, that is about $2/3$ of the one of the standard butterfly at every step (Eq.~\eqref{eq:bg-distance-ratio}, Table~\ref{tab:bg-distance}).
+The upper bound on the reduction of the traffic on the global links is therefore the same, $33\%$ with respect to the standard butterfly of the same order~\cite{desensi2025bine}.
+In the analysis of the job allocations of two supercomputers of~\cite{desensi2025bine}, the reduction grows with the number of nodes, since larger jobs span more groups; in a few cases (all on fewer than $64$ nodes) \bine{} increases the global traffic, because it minimizes the modular distance and not the actual one.
+
+\paragraph{Collectives.}
+The reduce-scatter uses a vector-halving, distance-doubling \bine{} butterfly: at each step a rank exchanges half of its data with its partner, so the largest messages go to the closest partners, and each rank sends $n\,\tfrac{p-1}{p}$ bytes in $s$ steps as in the standard algorithm.
+The allgather is its reverse.
+The allreduce uses either a \bine{} recursive doubling, in which the whole vector is exchanged at every step, for small vectors, or a reduce-scatter followed by an allgather for large ones~\cite{desensi2025bine}.
+
+\paragraph{Non-contiguous data.}
+The price of the shorter distances is that, in the distance-doubling order, the blocks to be sent at a step belong to a subtree whose ranks are not contiguous, whereas in the distance-halving order they are contiguous if the buffer is considered circular~\cite{desensi2025bine}.
+Four strategies are possible for the reduce-scatter, and symmetrically for the allgather: send each block \emph{block-by-block}; \emph{permute} the buffer beforehand so that the blocks to send are contiguous, which requires $p$ to be a power of two; \emph{send} contiguous data as if the buffer had been permuted and fix the ownership of the blocks at the end, which is free when an allgather follows, as in the allreduce; or use the distance-halving order, at the cost of more global traffic and of at most two segments per step (\emph{double send}).
+
+\paragraph{Number of ranks not a power of two.}
+As for the \bine{} tree, for $p$ even the construction can be used as is, removing the duplicated subtrees from each of the trees that compose the butterfly, whereas for $p$ odd the standard techniques of Sec.~\ref{sec:bg-butterfly} must be used, at the cost of an increase in the communication volume~\cite{desensi2025bine}.
+The implementation of this thesis is limited to powers of two.
+
+\paragraph{Distance-halving and distance-doubling.}
+As for the standard butterfly, the steps can be executed in the opposite order, which gives the distance-doubling \bine{} butterfly: at step $i$ rank $r$ communicates with $\pi_{s-1-i}(r)$, so that the sums of Eq.~\eqref{eq:bg-bine-tau} grow with $i$.
+The distance between partners is the same as in the \bine{} tree, $\delta_{\text{bine}}=\lvert\tau_i\rvert\approx 2^{s-i}/3$, i.e., about $2/3$ of the one of the standard butterfly at every step (Eq.~\eqref{eq:bg-distance-ratio}, Table~\ref{tab:bg-distance}), and this holds in both orders.
+The upper bound on the traffic reduction on the global links is therefore also the same, $33\%$ with respect to the standard butterfly of the same order~\cite{desensi2025bine}.
+In the analysis of the job allocations of two supercomputers of~\cite{desensi2025bine}, the reduction grows with the number of nodes, since larger jobs span more groups, whereas in a few cases (all on fewer than $64$ nodes) \bine{} increases the global traffic, because it minimizes the modular distance and not the actual one.
+The order is chosen as for the standard butterfly (Sec.~\ref{sec:bg-butterfly}): distance-halving is preferable for the collectives in which the messages grow at each step (the allgather), and distance-doubling when the largest messages are exchanged in the first steps (the reduce-scatter).
+
+\paragraph{Collectives.}
+The reduce-scatter uses a vector-halving, distance-doubling \bine{} butterfly: at each step a rank exchanges with its partner half of the data it currently holds, so the largest messages are exchanged with the closest partners, and each rank sends $n\,\tfrac{p-1}{p}$ bytes in $s$ steps, as in the standard algorithm~\cite{desensi2025bine}.
+Conceptually, it is the concurrent execution of a distance-doubling scatter and of a distance-halving reduce.
+The allgather is obtained by reversing the pattern of the reduce-scatter.
+For the allreduce, two algorithms are used: for small vectors, the whole vector is exchanged and combined at every step (the \bine{} version of recursive doubling), and for large vectors a reduce-scatter is followed by an allgather, as in Sec.~\ref{sec:bg-butterfly}.
+
+\paragraph{Descendants in the distance-doubling tree.}
+In the distance-halving \bine{} tree, the descendants of a rank reached at step $i$ share the $i+1$ most significant bits of their negabinary representation, and the corresponding blocks are contiguous (modulo $p$).
+This is not the case for the distance-doubling tree, which is the one used by the reduce-scatter.
+In the distance-doubling \bine{} tree rooted at rank $0$, each rank $r$ is assigned the value
+\begin{equation}
+  \nu(r)=h(r)\oplus\bigl(h(r)\gg1\bigr),\qquad
+  h(r)=
+  \begin{cases}
+    0 & \text{if } r=0,\\
+    \rtn(p-r) & \text{if $r$ is even, } r\neq0,\\
+    \rtn(r) & \text{if $r$ is odd,}
+  \end{cases}
+\end{equation}
+where $\gg$ is the logical right shift~\cite{desensi2025bine}.
+The partner of $r$ at step $j$ is the rank $q$ with $\nu(q)=\nu(r)\oplus2^{j}$, and rank $r$ receives the data at the step given by the position of the most significant set bit of $\nu(r)$.
+All the descendants of a rank reached at step $i$ share the $i+1$ least significant bits of $\nu$, so their blocks are in general not contiguous.
+Table~\ref{tab:bg-bine-nu} gives $\nu$ for $p=8$.
+For example, at step $0$ of the reduce-scatter rank $0$ must send the blocks whose $\nu$ has the least significant bit set to one, i.e., blocks $1$, $2$, $5$ and $6$.
+
+\begin{table}[t]
+\centering
+\small
+\caption{Value $\nu(r)$ of the distance-doubling \bine{} tree and its bit reversal, which is the position of block $r$ after the permutation described in the text, for $p=8$.}
+\label{tab:bg-bine-nu}
+\begin{tabular}{@{}l*{8}{c}@{}}
+\toprule
+$r$ & 0 & 1 & 2 & 3 & 4 & 5 & 6 & 7 \\
+\midrule
+$\nu(r)$ & 000 & 001 & 011 & 100 & 110 & 111 & 101 & 010 \\
+$\mathrm{reverse}(\nu(r))$ & 000 & 100 & 110 & 001 & 011 & 111 & 101 & 010 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\paragraph{Non-contiguous data.}
+Transmitting non-contiguous blocks can hurt performance, especially for small and medium vectors~\cite{desensi2025bine}.
+For the reduce-scatter, the following strategies are considered (for the allgather, the same ones are applied symmetrically).
+\begin{description}
+  \item[Block-by-block.] Each block is sent as a separate message. This increases the overhead for small and medium vectors, but allows more overlap between communication and computation.
+  \item[Permute.] The blocks are permuted before the first step, moving block $i$ to position $\mathrm{reverse}(\nu(i))$ (Table~\ref{tab:bg-bine-nu}), where $\mathrm{reverse}$ is the bit reversal. The blocks of a subtree then share their most significant bits and are contiguous: in the example above, blocks $1,2,5,6$ move to positions $4$--$7$. This requires $p$ to be a power of two.
+  \item[Send.] The blocks are not permuted, and the ranks send contiguous data as if they were. At the end, rank $r$ holds the block of rank $\mathrm{reverse}(\nu(r))$, so a final exchange is needed. When the reduce-scatter is followed by an allgather, e.g., in the allreduce, the allgather reverses the permutation and no extra step is needed.
+  \item[Two transmissions.] The reduce-scatter is executed with a distance-halving butterfly. This increases the traffic on the global links, but the blocks are contiguous if the buffer is considered circular, so at most two segments (one at the end and one at the beginning of the buffer) are sent per step.
+\end{description}
+
+\paragraph{Number of ranks not a power of two.}
+For the butterfly, the techniques of the standard butterfly (Sec.~\ref{sec:bg-butterfly}) apply, but they increase the communication volume, since the first $p-p'$ ranks must first receive an entire vector.
+For $p$ even, the construction can be used as is, with the same removal of the duplicated subtrees as for the \bine{} tree (Sec.~\ref{sec:bg-bine}), applied to each of the trees that compose the butterfly.
+For $p$ odd the standard techniques must be used~\cite{desensi2025bine}.
+The implementation of this thesis is limited to powers of two.

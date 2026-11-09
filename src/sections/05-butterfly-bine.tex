@@ -1,3 +1,524 @@
-\chapter{Butterfly-style Algorithms}\label{ch:butterfly}
+\chapter{Bine Butterfly Algorithms}\label{ch:butterfly}
 
-\todo{Butterfly}
+This chapter implements the Bine butterfly of Sec.~\ref{sec:bg-bine-butterfly} in \nccl{} for the allgather, the reduce-scatter and the allreduce.
+Sec.~\ref{sec:bfly-impl} describes the schedule of the distance-doubling butterfly, Sec.~\ref{sec:bfly-collectives} how it is turned into kernels, Sec.~\ref{sec:bfly-dhlv} the distance-halving schedule used by the double send strategy, and Sec.~\ref{sec:bfly-testing} the invariants that the schedule satisfies.
+
+%==============================================================================
+\section{Schedule construction}\label{sec:bfly-impl}
+
+This section describes how the schedule of the distance-doubling Bine butterfly is computed.
+The butterfly, its partners and the notion of distance are described in Sec.~\ref{sec:bg-bine-butterfly}.
+As for the tree, the schedule is built for $p=2^s$ ranks and is defined only for power-of-two numbers of ranks.
+Unlike the tree, a butterfly has no root, so there is no rotation: one set of tables serves every collective on the communicator.
+
+\subsection{Output and notation}
+
+The schedule is stored in a table of size $p\times s$ and in two vectors of size $p$,
+\begin{align}
+  \Pi(r,i) &\in \{0,\dots,p-1\}, \\
+  \nu(r) &\in \{0,\dots,p-1\}, \qquad \nu^{-1}(x)\in\{0,\dots,p-1\},
+\end{align}
+for $r\in[0,p-1]$ and $i\in[0,s-1]$.
+$\Pi(r,i)=q$ means that rank $r$ exchanges data with rank $q$ at step $i$, and $\nu$ is a rank-dependent label (Sec.~\ref{sec:bfly-def}) with inverse $\nu^{-1}$.
+Since all the ranks communicate at all the steps, the table has no empty entries, unlike the tables of the tree (Sec.~\ref{sec:tree-impl}).
+The arrays are filled by
+\begin{verbatim}
+void ncclGetBineButterflyDdbl(int nRanks, int steps,
+                              int *partners, int *index, int *order);
+\end{verbatim}
+which writes \texttt{partners} ($p\cdot s$ integers, the table $\Pi$), \texttt{index} (the vector $\nu$) and \texttt{order} (the vector $\nu^{-1}$), and asserts that $2^s=p$.
+The step $i$ is the $i$-th step of the reduce-scatter, in which the distance between partners grows; the allgather is its reverse (Sec.~\ref{sec:bfly-collectives}).
+
+\subsection{Definition of the schedule}\label{sec:bfly-def}
+
+Let
+\begin{equation}
+  \rho_i=\sum_{k=0}^{i}(-2)^k=\frac{1-(-2)^{i+1}}{3}.
+  \label{eq:bfly-rho}
+\end{equation}
+The partner of rank $r$ at step $i$ is
+\begin{equation}
+  \Pi(r,i)=
+  \begin{cases}
+    (r+\rho_i)\bmod p & \text{if $r$ is even},\\
+    (r-\rho_i)\bmod p & \text{if $r$ is odd}.
+  \end{cases}
+  \label{eq:bfly-partner}
+\end{equation}
+This is the partner of Eq.~\eqref{eq:bg-bine-bfly-partner} with the steps in the opposite order, since $\rho_i=\tau_{s-1-i}$ (Eq.~\eqref{eq:bg-bine-tau}), that is, $\Pi(r,i)=\pi_{s-1-i}(r)$.
+The distance between the partners is $\lvert\rho_i\rvert\approx 2^{i+1}/3$, which grows with $i$.
+
+The label $\nu$ identifies the position of a rank in the distance-doubling \bine{} tree rooted at rank $0$~\cite{desensi2025bine}.
+Let $h(r)$ be
+\begin{equation}
+  h(r)=
+  \begin{cases}
+    0 & \text{if } r=0,\\
+    \rtn(p-r) & \text{if $r$ is even and } r\neq0,\\
+    \rtn(r) & \text{if $r$ is odd,}
+  \end{cases}
+  \qquad
+  \nu(r)=h(r)\oplus\bigl(h(r)\gg1\bigr),
+  \label{eq:bfly-nu}
+\end{equation}
+where $\gg$ is the logical right shift.
+The vector $\nu^{-1}$ is its inverse (it exists by invariant~\ref{inv:bfly-perm} below).
+The labels also define where the block of a rank is stored in the kernels.
+The \emph{position} of the block of rank $r$ is the bit reversal of its label, $\mathrm{pos}(r)=\mathrm{rev}(\nu(r))$, where $\mathrm{rev}$ reverses the $s$ bits.
+We will see in Sec.~\ref{sec:bfly-collectives} that the blocks exchanged at a step are contiguous in the position space and, in general, not in the rank space.
+
+\subsection{Example: $p=8$}
+
+For $p=8$ ($s=3$) the values of $\rho_i$ are $\rho_0=1$, $\rho_1=-1$ and $\rho_2=3$.
+Table~\ref{tab:bfly-nu-p8} gives the labels and the positions, with $\nu^{-1}=[0,1,7,2,3,6,4,5]$, and Table~\ref{tab:bfly-ddbl-p8} the partners.
+Compared with Table~\ref{tab:bg-bine-bfly-p8}, the rows are in the opposite order.
+For example, rank $3$ ($\rho_0$, $\rho_1$, $\rho_2$) is odd and communicates with $3-1=2$, $3+1=4$ and $3-3=0$.
+
+\begin{table}[t]
+\centering
+\small
+\caption{Values $h(r)$ and $\nu(r)$ (in binary) and position $\mathrm{pos}(r)=\mathrm{rev}(\nu(r))$ (in decimal) for $p=8$ ($s=3$).}
+\label{tab:bfly-nu-p8}
+\begin{tabular}{@{}l*{8}{c}@{}}
+\toprule
+$r$ & 0 & 1 & 2 & 3 & 4 & 5 & 6 & 7 \\
+\midrule
+$h(r)$ & 000 & 001 & 010 & 111 & 100 & 101 & 110 & 011 \\
+$\nu(r)$ & 000 & 001 & 011 & 100 & 110 & 111 & 101 & 010 \\
+$\mathrm{pos}(r)$ & 0 & 4 & 6 & 1 & 3 & 7 & 5 & 2 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{table}[t]
+\centering
+\small
+\caption{Partner $\Pi(r,i)$ of rank $r$ at step $i$ in the distance-doubling \bine{} butterfly with $p=8$.}
+\label{tab:bfly-ddbl-p8}
+\begin{tabular}{@{}l*{8}{c}@{}}
+\toprule
+$r$ & 0 & 1 & 2 & 3 & 4 & 5 & 6 & 7 \\
+\midrule
+$i=0$ & 1 & 0 & 3 & 2 & 5 & 4 & 7 & 6 \\
+$i=1$ & 7 & 2 & 1 & 4 & 3 & 6 & 5 & 0 \\
+$i=2$ & 3 & 6 & 5 & 0 & 7 & 2 & 1 & 4 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{Computing the tables}
+
+Algorithm~\ref{alg:bfly-schedule} computes the three arrays.
+The labels are computed first, one per rank, and $\nu^{-1}$ is obtained by inverting them; then the partners are computed one step at a time, accumulating $\rho_i$.
+Since $\lvert\rho_i\rvert\approx2^{i+1}/3$, the accumulator is kept in a 64-bit integer, and it is reduced modulo $p$ with a non-negative result before being added to the rank.
+
+\begin{algorithm}[H]
+\caption{Schedule of the distance-doubling Bine butterfly ($p=2^s$).}
+\label{alg:bfly-schedule}
+\begin{algorithmic}[1]
+\Require $p=2^s$
+\Ensure table $\Pi$ of size $p\times s$, vectors $\nu$ and $\nu^{-1}$ of size $p$
+\For{$r\gets 0$ \textbf{to} $p-1$}
+  \State compute $h(r)$ \Comment{Eq.~\eqref{eq:bfly-nu}}
+  \State $\nu(r)\gets h(r)\oplus(h(r)\gg1)$;\quad $\nu^{-1}(\nu(r))\gets r$
+\EndFor
+\State $\rho\gets0$;\quad $w\gets1$
+\For{$i\gets 0$ \textbf{to} $s-1$}
+  \State $\rho\gets\rho+w$;\quad $w\gets-2w$ \Comment{$\rho=\rho_i$, Eq.~\eqref{eq:bfly-rho}}
+  \State $m\gets\rho\bmod p$ \Comment{non-negative}
+  \For{$r\gets 0$ \textbf{to} $p-1$}
+    \If{$r$ is even}
+      \State $\Pi(r,i)\gets(r+m)\bmod p$
+    \Else
+      \State $\Pi(r,i)\gets(r-m)\bmod p$
+    \EndIf
+  \EndFor
+\EndFor
+\end{algorithmic}
+\end{algorithm}
+
+The construction costs $O(p\log p)$ operations, plus the conversions, and the table occupies $O(p\log p)$ memory.
+
+%==============================================================================
+\section{Allgather, reduce-scatter and allreduce}\label{sec:bfly-collectives}
+
+The table describes who communicates with whom at each step; which data moves is decided by the collective.
+In the allgather, each rank contributes a block of \texttt{count} elements and every rank must obtain the $p$ blocks, with the block of rank $b$ at offset $b\cdot\texttt{count}$ of \texttt{recvbuff}.
+In the reduce-scatter, each rank holds $p$ blocks of \texttt{count} elements, and rank $b$ must obtain the reduction of the blocks $b$ of all the ranks.
+In the allreduce, each rank holds a vector and every rank must obtain its elementwise reduction over all the ranks; it is the composition of the two previous collectives (Sec.~\ref{sec:bfly-allreduce}).
+As in the tree (Sec.~\ref{sec:tree-collectives}), a channel handles the slice $[\texttt{grid},\texttt{grid}+\texttt{channelCount})$ of every block, obtained with \texttt{ncclCollCbdPart} (Sec.~\ref{sec:nccl-cbd}).
+
+\subsection{Integration in \nccl{}}
+
+The butterfly is integrated as the tree (Sec.~\ref{sec:tree-integration}): it uses the same algorithm, \texttt{NCCL\_ALGO\_BINE}, and the same pattern, \texttt{ncclPatternBine}, now for the allgather, the reduce-scatter and the allreduce as well, and it has the same three pieces.
+\begin{itemize}
+  \item \emph{Pattern.} \texttt{ncclPatternBine}, which the host uses to compute the number of steps and the chunking.
+  \item \emph{Tables.} The four tables of Sec.~\ref{sec:bfly-impl} and Sec.~\ref{sec:bfly-dhlv} are stored in the same structure \texttt{channel.bine} as the tables of the tree: \texttt{partners} ($\Pi$), \texttt{dhlvPartners} ($\Pi^{\mathrm{dh}}$), \texttt{index} ($\nu$) and \texttt{order} ($\nu^{-1}$), next to the \texttt{send} and \texttt{recv} tables of the tree.
+  The structure also holds the number of steps, in the two fields \texttt{nSteps} and \texttt{nDoublingSteps}, which are both set to $s$, and all the table pointers are initialized to null.
+  The kernels read the tables from \texttt{channel.bine} and take the number of steps of the butterfly from \texttt{nDoublingSteps}.
+  \item \emph{\texttt{RunWorkColl} specializations.} One for each collective and protocol, as for the tree, which select the protocol parameters and call the device function of the strategy.
+  The only difference from the tree is that the specialization branches on the strategy of Sec.~\ref{sec:bfly-strategies}, calling the kernel of send, permute, block-by-block or double send (Sec.~\ref{sec:bfly-kernels}).
+\end{itemize}
+
+\subsection{Blocks, positions and strategies}\label{sec:bfly-strategies}
+
+\paragraph{The allgather as the reverse of the reduce-scatter.}
+The allgather runs the butterfly in the opposite order of the reduce-scatter: its step $k\in[0,s-1]$ uses the partner $\Pi(r,s-1-k)$, so the distance between partners decreases and the size of the exchanged data doubles at each step (Sec.~\ref{sec:bg-bine-butterfly}).
+At step $k$ a rank holds $g=2^k$ blocks, sends them to its partner, and receives the $g$ blocks of the partner.
+The question is which blocks these are, and where they are stored.
+
+\paragraph{Contiguity in the position space.}
+Let $x=\mathrm{pos}(r)$ and $y=\mathrm{pos}(q)$ for $q=\Pi(r,s-1-k)$.
+Bit $b$ of $\nu$ is bit $s-1-b$ of $\mathrm{pos}$, so invariant~\ref{inv:bfly-split} below, with $i=s-1-k$, says that $x$ and $y$ agree on all the bits above bit $k$ and differ at bit $k$.
+The $g$ blocks held at step $k$ are therefore those whose positions are in the aligned range of size $g$ that contains $x$, and the blocks of the partner are those in the sibling range.
+In the position space the pattern is that of a recursive-doubling allgather, with the partners chosen by the \bine{} schedule.
+In the rank space, instead, the blocks of an aligned range of positions are the ranks $\nu^{-1}(\mathrm{rev}(y))$, which in general are not contiguous.
+
+\paragraph{Strategies.}
+The strategies for the non-contiguous data (Sec.~\ref{sec:bg-bine-butterfly}) differ in where they put the blocks, not in the pattern.
+We describe them through three choices, summarized in Tables~\ref{tab:bfly-strategies} and~\ref{tab:bfly-strategies-rs}.
+\begin{itemize}
+  \item The \emph{slot} of position $y$, i.e., the block-sized region of the working buffer (\texttt{recvbuff} in the allgather, \texttt{sendbuff} in the reduce-scatter) that is used for the blocks at position $y$ during the butterfly.
+  \item A \emph{pre-step}, executed before the butterfly, which puts the data in the right slots.
+  \item A \emph{post-step}, executed after the butterfly, which restores the natural order of the blocks.
+\end{itemize}
+\emph{Send} makes the blocks start at the right slot by exchanging them before the butterfly: rank $r$ sends its block to rank $\nu^{-1}(\mathrm{rev}(r))$ and receives the block of rank $\mathrm{pos}(r)$, which it stores at slot $\mathrm{pos}(r)$.
+Rank $r$ then acts as the rank of position $\mathrm{pos}(r)$, the slot of position $y$ is $y$, and the output is in natural order at the end of the butterfly.
+The ranks with $\mathrm{pos}(r)=r$ just copy their block.
+\emph{Permute} stores the block of $r$ at slot $\mathrm{pos}(r)$ with a local copy, runs the butterfly in the position space, and at the end permutes the blocks in place, moving the block of rank $b$ from slot $\mathrm{pos}(b)$ to slot $b$.
+\emph{Block-by-block} keeps the blocks in natural order, so the slot of position $y$ is $\nu^{-1}(\mathrm{rev}(y))$, and each block of the range is sent separately.
+\emph{Double send} also keeps the natural order, but uses the distance-halving butterfly, in which the blocks held are contiguous modulo $p$ (Sec.~\ref{sec:bfly-dhlv}).
+
+\begin{table}[t]
+\centering
+\footnotesize
+\setlength{\tabcolsep}{4pt}
+\caption{The four strategies as choices of pre-step, slot and post-step in the allgather. Send, permute and block-by-block use the distance-doubling table in reverse order; double send uses the distance-halving one (Sec.~\ref{sec:bfly-dhlv}).}
+\label{tab:bfly-strategies}
+\begin{tabularx}{\linewidth}{@{}l X X X X@{}}
+\toprule
+Strategy & Pre-step & Slot of position $y$ & Post-step & Unit of transfer \\
+\midrule
+Send & exchange the block with $\nu^{-1}(\mathrm{rev}(r))$ and $\mathrm{pos}(r)$ & $y$ & -- & range \\
+Permute & local copy to slot $\mathrm{pos}(r)$ & $y$ & in-place permutation & range \\
+Block-by-block & local copy to slot $r$ & $\nu^{-1}(\mathrm{rev}(y))$ & -- & block \\
+Double send & local copy to slot $r$ & circular window (Sec.~\ref{sec:bfly-dhlv}) & -- & block, or two ranges \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+\paragraph{The reduce-scatter.}
+The reduce-scatter is the time reverse of the allgather: its step $i$ uses the partner $\Pi(r,i)$, so the distance between partners grows and the size of the exchanged data halves.
+At step $i$ a rank holds the contributions to a window of $2^{s-i}$ blocks, sends to its partner the half that the partner will keep, and receives and reduces the half it keeps, so that after $s$ steps it holds the reduced block of its position (invariant~\ref{inv:bfly-split}).
+The slots are those of the allgather, and what changes is where the exchange and the permutation are executed.
+\emph{Send} runs the butterfly directly on the input, and after it the rank holds the reduced block of position $\mathrm{pos}(r)$, which is the block of rank $\mathrm{pos}(r)$: the exchange of the allgather is therefore a post-step, in which $r$ sends that block to rank $\mathrm{pos}(r)$ and receives its own from rank $\nu^{-1}(\mathrm{rev}(r))$.
+\emph{Permute} permutes the input in place before the butterfly, so that the block of rank $b$ is at slot $\mathrm{pos}(b)$, and after it the reduced block of $r$ is already at slot $\mathrm{pos}(r)$ and only has to be copied to the output.
+\emph{Block-by-block} and \emph{double send} need neither: they keep the natural order, and only the final block is copied to the output.
+In short, the exchange of \emph{send} and the permutation of \emph{permute} are executed before the butterfly in the allgather and after it in the reduce-scatter for the exchange, and the other way around for the permutation (Table~\ref{tab:bfly-strategies-rs}).
+When a reduce-scatter is followed by an allgather, as in the allreduce, the exchange of \emph{send} cancels out~\cite{desensi2025bine}, which is what the allreduce of Sec.~\ref{sec:bfly-allreduce} uses.
+
+\begin{table}[t]
+\centering
+\footnotesize
+\setlength{\tabcolsep}{4pt}
+\caption{The strategies in the reduce-scatter. The slots are those of Table~\ref{tab:bfly-strategies}; send, permute and block-by-block use the distance-doubling table in its order, double send the distance-halving one.}
+\label{tab:bfly-strategies-rs}
+\begin{tabularx}{\linewidth}{@{}l X X X X@{}}
+\toprule
+Strategy & Pre-step & Slot of position $y$ & Post-step & Unit of transfer \\
+\midrule
+Send & -- & $y$ & send the block at slot $\mathrm{pos}(r)$ to rank $\mathrm{pos}(r)$, receive from $\nu^{-1}(\mathrm{rev}(r))$ & range \\
+Permute & in-place permutation of the input & $y$ & copy slot $\mathrm{pos}(r)$ to the output & range \\
+Block-by-block & -- & $\nu^{-1}(\mathrm{rev}(y))$ & copy slot $r$ to the output & block \\
+Double send & -- & circular window (Sec.~\ref{sec:bfly-dhlv}) & copy slot $r$ to the output & block, or two ranges \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+\subsection{Kernels}\label{sec:bfly-kernels}
+
+\paragraph{Structure of the kernels.}
+Algorithms~\ref{alg:bfly-allgather} and~\ref{alg:bfly-reducescatter} are the common structure of the kernels of send, permute and block-by-block, for the allgather and the reduce-scatter.
+The kernels differ only in the three choices of Tables~\ref{tab:bfly-strategies} and~\ref{tab:bfly-strategies-rs}, which we write as the functions \textsc{PreStep}, \textsc{Slot} and \textsc{PostStep}; the code of the butterfly itself is the same.
+The kernels of double send have the same loop, with a different table and a circular window (Sec.~\ref{sec:bfly-dhlv}).
+
+\begin{algorithm}[H]
+\caption{Bine allgather (distance-doubling schedule), common structure of the kernels of one channel.}
+\label{alg:bfly-allgather}
+\begin{algorithmic}[1]
+\State \Call{PreStep}{}\Comment{send: exchange, permute/block-by-block: local copy}
+\State $x\gets\mathrm{pos}(r)$
+\For{$k \gets 0$ \textbf{to} $s-1$}
+  \State $q\gets\Pi(r,s-1-k)$;\quad $g\gets2^k$
+  \State $b\gets\lfloor x/2g\rfloor\cdot2g$
+  \If{bit $k$ of $x$ is $0$} $(a_s,a_r)\gets(b,\,b+g)$ \textbf{else} $(a_s,a_r)\gets(b+g,\,b)$ \EndIf
+  \For{each piece of the $g$ blocks}\Comment{send and receive alternate}
+    \State \texttt{sendFromOutput} to $q$ the slots \Call{Slot}{$a_s+j$}, $j\in[0,g-1]$
+    \State \texttt{recv} from $q$ in the slots \Call{Slot}{$a_r+j$}
+  \EndFor
+  \State \textbf{barrier}\Comment{the next step sends what was received}
+\EndFor
+\State \Call{PostStep}{}\Comment{permute: in-place permutation}
+\end{algorithmic}
+\end{algorithm}
+
+\begin{algorithm}[H]
+\caption{Bine reduce-scatter (distance-doubling schedule), common structure of the kernels of one channel.}
+\label{alg:bfly-reducescatter}
+\begin{algorithmic}[1]
+\State \Call{PreStep}{}\Comment{permute: in-place permutation of the input}
+\State $x\gets\mathrm{pos}(r)$
+\For{$i \gets 0$ \textbf{to} $s-1$}
+  \State $q\gets\Pi(r,i)$;\quad $g\gets2^{s-1-i}$
+  \State $b\gets\lfloor x/2g\rfloor\cdot2g$
+  \If{bit $s-1-i$ of $x$ is $0$} $(a_s,a_r)\gets(b+g,\,b)$ \textbf{else} $(a_s,a_r)\gets(b,\,b+g)$ \EndIf
+  \For{each piece of the $g$ blocks}\Comment{send and receive alternate}
+    \State \texttt{sendFromOutput} to $q$ the slots \Call{Slot}{$a_s+j$}, $j\in[0,g-1]$
+    \State \texttt{recvReduceCopy} from $q$ in the slots \Call{Slot}{$a_r+j$} \Comment{reduced in place}
+  \EndFor
+  \State \textbf{barrier}\Comment{the next step sends and reduces what was received}
+\EndFor
+\State \Call{PostStep}{}\Comment{send: exchange, permute/block-by-block: copy to the output}
+\end{algorithmic}
+\end{algorithm}
+
+\paragraph{One \texttt{Primitives} per step.}
+In the tree a rank either receives or sends at a step; in the butterfly it does both with the same peer.
+The kernel therefore builds, at each step, one \texttt{Primitives} object with fan $\langle1,1\rangle$ and the same peer in both directions, and the data is sent from the working buffer, where the blocks already are, with the \texttt{FromOutput} operations (Table~\ref{tab:bfly-calls}).
+In the allgather the working buffer is \texttt{recvbuff} and the received blocks are stored with \texttt{recv}.
+In the reduce-scatter it is the input buffer, in which the data is accumulated in place: \texttt{recvReduceCopy} combines the received data with the data already in the slot and writes the result in the same slot, and the receive of the last step applies the final operation of the reduction.
+As in the reduce (Sec.~\ref{sec:tree-collectives}), the two direct flags are tested together and select the zero-copy variant of both directions.
+In both collectives a barrier separates the steps, since the next step sends, and in the reduce-scatter also reduces, the data written by the previous one.
+The exchange of \emph{send} uses one object with different peers (the rank that gets my block and the rank that gives me mine), and sends and receives chunk by chunk so that no more than one chunk is in flight before the receive; the permutation of \emph{permute} is local, and in the reduce-scatter it is completed before any primitive is posted, since a direct peer may read the buffer.
+The in-place permutation follows the cycles of the permutation, so that no scratch buffer is needed, and each thread walks the cycle for its own columns of elements.
+
+\begin{table}[t]
+\centering
+\footnotesize
+\setlength{\tabcolsep}{4pt}
+\caption{\nccl{} operations used by the Bine allgather and reduce-scatter. The direct operation is used when the zero-copy path is available.}
+\label{tab:bfly-calls}
+\begin{tabularx}{\linewidth}{@{}l X c l l@{}}
+\toprule
+ & Role & Fan & Direct & Otherwise \\
+\midrule
+Allgather & Send the window to the partner & $\langle1,1\rangle$ & \texttt{directSendFromOutput} & \texttt{sendFromOutput} \\
+ & Receive the window of the partner & $\langle1,1\rangle$ & \texttt{directRecv} & \texttt{recv} \\
+ & Pre-step of \emph{send}: send my block, receive mine & $\langle1,1\rangle$ & \texttt{directSend}, \texttt{directRecv} & \texttt{send}, \texttt{recv} \\
+\midrule
+Reduce-scatter & Send the window to the partner & $\langle1,1\rangle$ & \texttt{directSendFromOutput} & \texttt{sendFromOutput} \\
+ & Receive and reduce the window of the partner & $\langle1,1\rangle$ & \texttt{directRecvReduceCopy} & \texttt{recvReduceCopy} \\
+ & Post-step of \emph{send}: send the block, receive mine & $\langle1,1\rangle$ & \texttt{directSend}, \texttt{directRecv} & \texttt{send}, \texttt{recv} \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+\paragraph{Fast path and pieces.}\label{sec:bfly-fast}
+Both peers of a step send first, so a rank cannot send all its data before receiving: if the data exceeded the capacity of the slot FIFO (Sec.~\ref{sec:nccl-transport}), both would block in the send.
+The kernels therefore alternate send and receive (in the reduce-scatter, receive and reduce) on pieces, so that no more than the capacity of the FIFO is in flight before the peer receives.
+The way the window is cut into pieces depends on how it is laid out in memory.
+\begin{itemize}
+  \item \emph{Fast path.} If the slice of the channel covers whole blocks (\texttt{channelCount}$=$\texttt{count}) and the blocks of the window are adjacent in memory, the window is a single contiguous region and is transferred in pieces of a small multiple of the chunk size (currently two chunks).
+  This is the case for send and permute, whose window is contiguous in the position space.
+  In double send the window is contiguous modulo $p$, so it is made of at most two regions, the one that ends at the last block and the one that starts at the first, and each region is transferred in pieces.
+  The window that a rank sends is the one that its partner receives, so the two ends cut it into the same regions and the same pieces.
+  \item \emph{Slow path.} Otherwise, since a channel handles a slice of each block, the data of consecutive blocks is separated by a stride of \texttt{count} elements, and the kernel transfers each block, chunk by chunk, with one chunk in flight per direction.
+  This is always the case for block-by-block, whose blocks are not adjacent in memory, and for every strategy when the slice of the channel does not cover whole blocks.
+\end{itemize}
+The fast path issues fewer and larger primitive calls than the slow path, which pays the overhead of a call for every block of the window and every chunk; the size of a piece is the compromise between this overhead and the data that can be in flight in the FIFO.
+
+
+\subsection{Allreduce}\label{sec:bfly-allreduce}
+
+The allreduce is a reduce-scatter followed by an allgather on the same butterfly: the reduce-scatter of Algorithm~\ref{alg:bfly-reducescatter} halves the data while the distance between partners grows, and the allgather of Algorithm~\ref{alg:bfly-allgather} doubles it back along the same pairs in the opposite order.
+Unlike the two collectives alone, the result is the whole vector, so there is no block owned by a rank that has to be restored to its natural place: the blocks are indexed by position, a rank holds after the reduce-scatter the reduced block of position $\mathrm{pos}(r)$, and the allgather returns every block to its position.
+The exchange of \emph{send} therefore cancels out (Sec.~\ref{sec:bfly-strategies}) and the allreduce needs no pre-step and no post-step.
+The other strategies exist only to avoid or to restore that exchange, and have nothing to do here; since the vector is a single contiguous array, we use \emph{send} without the exchange.
+
+\paragraph{Layout and buffers.}
+The slice of the channel is processed in loops of $p$ chunks of $c$ elements each, where $c$ is the chunk size, and block $b$ (at position $b$) of loop $l$ is the chunk of $c$ elements at offset $\texttt{grid}+l\,pc+b\,c$ in the slice.
+The number of loops is $L=\lceil\texttt{channelCount}/(pc)\rceil$, and the blocks of the last loop that fall beyond the end of the slice are shorter, or empty; the calls for them are still issued with their (possibly zero) number of elements, so that the two ends of an exchange make the same calls.
+The kernel first copies \texttt{sendbuff} into \texttt{recvbuff} when they differ, and then reduces and gathers in place in \texttt{recvbuff}, so \texttt{sendbuff} is left untouched.
+
+\paragraph{Chunking.}
+The chunk is limited to the data of one FIFO step, so that every transfer is a single chunk and fits in one slot of the FIFO (Sec.~\ref{sec:nccl-transport}); the proxy must derive the same chunk size.
+Every call sends one chunk and receives one chunk, so there is never more than a chunk in flight before the peer receives, and the allreduce needs neither the pieces nor the fast path of Sec.~\ref{sec:bfly-kernels}.
+The price is a call per chunk and per block: a step with a window of $g$ blocks issues $g\cdot L$ sends and as many receives.
+
+\paragraph{Kernel.}
+Algorithm~\ref{alg:bfly-allreduce} is the structure of the kernel.
+As in the other kernels, one \texttt{Primitives} object with fan $\langle1,1\rangle$ and the same peer in both directions is built at each step, with a barrier between steps.
+The reduce-scatter uses \texttt{sendFromOutput} and \texttt{recvReduceCopy}, the last of which applies the final operation of the reduction at the last step, and the allgather uses \texttt{sendFromOutput} and \texttt{recv} (Table~\ref{tab:bfly-calls}).
+A rank skips a step when its partner is undefined or is itself, and the proxy must apply the same condition.
+
+\begin{algorithm}[H]
+\caption{Bine allreduce (distance-doubling schedule), kernel of one channel.}
+\label{alg:bfly-allreduce}
+\begin{algorithmic}[1]
+\State copy \texttt{sendbuff} to \texttt{recvbuff} if they differ;\ \textbf{barrier}
+\State $x\gets\mathrm{pos}(r)$
+\For{$i \gets 0$ \textbf{to} $s-1$}\Comment{reduce-scatter}
+  \State $q\gets\Pi(r,i)$;\quad $g\gets2^{s-1-i}$;\quad $b\gets\lfloor x/2g\rfloor\cdot2g$
+  \If{bit $s-1-i$ of $x$ is $0$} $(a_s,a_r)\gets(b+g,\,b)$ \textbf{else} $(a_s,a_r)\gets(b,\,b+g)$ \EndIf
+  \For{$l\gets0$ \textbf{to} $L-1$}
+    \For{$j\gets0$ \textbf{to} $g-1$}
+      \State \texttt{sendFromOutput} to $q$ the chunk $a_s+j$ of loop $l$
+      \State \texttt{recvReduceCopy} from $q$ the chunk $a_r+j$ of loop $l$
+    \EndFor
+  \EndFor
+  \State \textbf{barrier}
+\EndFor
+\For{$k \gets 0$ \textbf{to} $s-1$}\Comment{allgather}
+  \State $q\gets\Pi(r,s-1-k)$;\quad $g\gets2^k$;\quad $b\gets\lfloor x/2g\rfloor\cdot2g$
+  \If{bit $k$ of $x$ is $0$} $(a_s,a_r)\gets(b,\,b+g)$ \textbf{else} $(a_s,a_r)\gets(b+g,\,b)$ \EndIf
+  \For{$l\gets0$ \textbf{to} $L-1$}
+    \For{$j\gets0$ \textbf{to} $g-1$}
+      \State \texttt{sendFromOutput} to $q$ the chunk $a_s+j$ of loop $l$
+      \State \texttt{recv} from $q$ the chunk $a_r+j$ of loop $l$
+    \EndFor
+  \EndFor
+  \State \textbf{barrier}
+\EndFor
+\end{algorithmic}
+\end{algorithm}
+
+%==============================================================================
+\section{Distance-halving schedule (double send)}\label{sec:bfly-dhlv}
+
+The double send strategy (Sec.~\ref{sec:bfly-strategies}) runs the butterfly with the distance-halving schedule, i.e., the one of Eq.~\eqref{eq:bg-bine-bfly-partner}, in the order in which it is defined.
+The table is filled by
+\begin{verbatim}
+void ncclGetBineButterflyDhlv(int nRanks, int steps, int *partners);
+\end{verbatim}
+which writes $p\cdot s$ integers, the table $\Pi^{\mathrm{dh}}$, and takes no root and produces no labels: the blocks stay in the natural rank order, so the vectors $\nu$ and $\nu^{-1}$ are not needed.
+
+\subsection{Definition}
+
+Let $\tau_i=\sum_{j=0}^{s-i-1}(-2)^j=\frac{1-(-2)^{s-i}}{3}$, which is the offset of Eq.~\eqref{eq:bg-bine-bfly-partner}.
+The partner of rank $r$ at step $i$ is
+\begin{equation}
+  \Pi^{\mathrm{dh}}(r,i)=
+  \begin{cases}
+    (r+\tau_i)\bmod p & \text{if $r$ is even},\\
+    (r-\tau_i)\bmod p & \text{if $r$ is odd}.
+  \end{cases}
+  \label{eq:bfly-dhlv-partner}
+\end{equation}
+The distance $\lvert\tau_i\rvert\approx2^{s-i}/3$ halves at each step.
+Since $\rho_i=\tau_{s-1-i}$, the table is the one of Sec.~\ref{sec:bfly-impl} with the steps in the opposite order, $\Pi^{\mathrm{dh}}(r,i)=\Pi(r,s-1-i)$, with the same sign convention for even and odd ranks.
+The two generators therefore differ only in the order of the steps.
+For $p=8$ the offsets are $\tau_0=3$, $\tau_1=-1$ and $\tau_2=1$, and the table is
+
+\begin{center}
+\small
+\begin{tabular}{@{}l*{8}{c}@{}}
+\toprule
+$r$ & 0 & 1 & 2 & 3 & 4 & 5 & 6 & 7 \\
+\midrule
+$i=0$ & 3 & 6 & 5 & 0 & 7 & 2 & 1 & 4 \\
+$i=1$ & 7 & 2 & 1 & 4 & 3 & 6 & 5 & 0 \\
+$i=2$ & 1 & 0 & 3 & 2 & 5 & 4 & 7 & 6 \\
+\bottomrule
+\end{tabular}
+\end{center}
+which is Table~\ref{tab:bfly-ddbl-p8} with the rows reversed.
+
+\subsection{Circular window}
+
+In this schedule the blocks exchanged are contiguous in the rank space, provided that the buffer is considered circular (Sec.~\ref{sec:bg-bine-butterfly}).
+In the reduce-scatter, before step $i$ a rank holds the contributions to a window of $2^{s-i}$ consecutive blocks modulo $p$, sends one half of it to its partner and keeps the other.
+Let $g=s-1-i$, so that each half has $2^g$ blocks.
+The two partners hold the same window and keep complementary halves, and the half kept by $r$ is the upper one if and only if $r$ and $g$ have different parity.
+The start of the window moves up by $2^g$ at the steps in which the upper half is kept and the last window is $\{r\}$, so the window of the first step starts at
+\begin{equation}
+  a_0(r)=\Bigl(r-\sum_{\substack{0\le g<s\\ g\not\equiv r\ (\mathrm{mod}\ 2)}}2^g\Bigr)\bmod p .
+  \label{eq:bfly-dhlv-start}
+\end{equation}
+For $p=8$, ranks $0$ and $3$ both start from $a_0=6$, and the windows they hold are
+\begin{center}
+\small
+\begin{tabular}{@{}l ccc ccc@{}}
+\toprule
+ & \multicolumn{3}{c}{rank $0$} & \multicolumn{3}{c}{rank $3$} \\
+\cmidrule(lr){2-4}\cmidrule(l){5-7}
+$i$ ($g$) & window & sends & keeps & window & sends & keeps \\
+\midrule
+0 (2) & $[6,5]$ & $[2,5]$ & $[6,1]$ & $[6,5]$ & $[6,1]$ & $[2,5]$ \\
+1 (1) & $[6,1]$ & $[6,7]$ & $[0,1]$ & $[2,5]$ & $[4,5]$ & $[2,3]$ \\
+2 (0) & $[0,1]$ & $\{1\}$ & $\{0\}$ & $[2,3]$ & $\{2\}$ & $\{3\}$ \\
+\bottomrule
+\end{tabular}
+\end{center}
+where $[x,y]$ is the circular interval from $x$ to $y$.
+Rank $0$ sends at step $0$ to rank $3$ the blocks $[2,5]$, which are those that rank $3$ keeps, and so on.
+
+The allgather is the time reverse: it starts from the window $\{r\}$ and doubles it at each step, receiving the half that the reduce-scatter sent, so the table is read from the last step to the first.
+This means that the allgather of the double send moves the largest data over the longest distance, whereas the other strategies do the opposite (Sec.~\ref{sec:bfly-strategies}); this is the price of keeping the natural order without any pre-step or post-step.
+
+\subsection{Kernels}
+
+The kernels of double send have the structure of Algorithms~\ref{alg:bfly-allgather} and~\ref{alg:bfly-reducescatter}, with the table $\Pi^{\mathrm{dh}}$ and the circular window in place of the position space.
+They have no pre-step and no post-step beyond a local copy of the own block: the reduce-scatter accumulates in place and ends with the block of the rank in its natural slot, and the allgather starts by copying the own block to its slot.
+The window is transferred with the fast path of Sec.~\ref{sec:bfly-kernels} when the slice of the channel covers whole blocks, as at most two contiguous regions (it wraps at most once), and block by block and chunk by chunk otherwise.
+
+\subsection{Invariants}
+
+\todo{Invariants of the distance-halving schedule (symmetry, no self-communication, equality with the reverse of $\Pi$, same window and complementary halves for the partners, final window $\{r\}$) and their tests.}
+
+%==============================================================================
+\section{Testing}\label{sec:bfly-testing}
+
+The schedule is a deterministic function of $p=2^s$, and every property that the collectives rely on is a statement about the finite tables $\Pi$, $\nu$ and $\nu^{-1}$.
+We therefore test it exhaustively against a set of invariants, for every $p=2^s$ with $1\le s\le 12$ (up to $2^{12}=4{,}096$ ranks), every rank and every step; there is no root to enumerate, since the butterfly is rootless.
+We do not prove the invariants here: this section states what each of them is needed for.
+
+\subsection{Invariants}
+
+For every $p=2^s$, rank $r$ and step $i\in[0,s-1]$:
+\begingroup
+\renewcommand{\theenumi}{J\arabic{enumi}}
+\renewcommand{\labelenumi}{\textbf{(\theenumi)}}
+\begin{enumerate}
+  \item \label{inv:bfly-sym} \emph{Symmetry.} $\Pi(\Pi(r,i),i)=r$.
+  \item \label{inv:bfly-self} \emph{No self-communication.} $\Pi(r,i)\neq r$.
+  \item \label{inv:bfly-full} \emph{Full participation.} $\Pi(r,i)\in[0,p-1]$ is defined for every $r$ and $i$: there are no idle slots.
+  \item \label{inv:bfly-perm} \emph{Labels are a permutation.} $\nu$ is a permutation of $[0,p-1]$ and $\nu^{-1}(\nu(r))=r$.
+  \item \label{inv:bfly-split} \emph{Partners split the blocks.} With $q=\Pi(r,i)$,
+  \begin{equation}
+    \bigl(\nu(r)\oplus\nu(q)\bigr)\bmod 2^{i+1}=2^i,
+    \label{eq:bfly-split}
+  \end{equation}
+  i.e., the labels of $r$ and $q$ agree on the bits below $i$ and differ at bit $i$.
+  \item \label{inv:bfly-closed} \emph{Closed form.} $\Pi(r,i)$ is given by Eq.~\eqref{eq:bfly-partner}.
+\end{enumerate}
+\endgroup
+
+\subsection{What they guarantee}
+
+\paragraph{Exchange structure (\ref{inv:bfly-sym})--(\ref{inv:bfly-full}).}
+These are structural.
+Together they say that at each step the ranks are split in $p/2$ pairs, that both ranks of a pair compute the same pair, and that nobody is idle or paired with itself: the send and the receive of an exchange always match, and the kernels need no branch for ranks that skip a step, unlike the tree (Sec.~\ref{sec:tree-testing}).
+
+\paragraph{Labels and blocks (\ref{inv:bfly-perm}), (\ref{inv:bfly-split}).}
+The positions $\mathrm{pos}(r)=\mathrm{rev}(\nu(r))$ are a bijection between ranks and block slots (\ref{inv:bfly-perm}), so no block is lost or stored twice.
+(\ref{inv:bfly-split}) is what makes the exchange correct: at each step the two partners hold the same set of blocks, each keeps the half that the other sends, and after $s$ steps each rank holds only its own block, with every contribution combined exactly once in the reduce-scatter.
+The allgather is the same statement in the opposite direction.
+In the position space it says that the partners agree above bit $k=s-1-i$ and differ at bit $k$, which is what makes the exchanged blocks contiguous (Sec.~\ref{sec:bfly-strategies}).
+
+\paragraph{Identifying the Bine butterfly (\ref{inv:bfly-split}), (\ref{inv:bfly-closed}).}
+Invariants (\ref{inv:bfly-sym})--(\ref{inv:bfly-full}) are also satisfied by the standard recursive-doubling butterfly, so they do not identify the Bine butterfly.
+(\ref{inv:bfly-closed}) fixes the partners, and (\ref{inv:bfly-split}) ties them to the labels, and therefore to the positions of the blocks.
+
+\subsection{Scope and limits}
+
+The tests are exhaustive over all ranks and steps for every power of two $p\le2^{12}$, with a cost of $O(p\log p)$ lookups per value of $p$.
+Beyond this range, correctness relies on the construction and not on testing.
+(\ref{inv:bfly-split}) relates two independent computations, the partners, which come from the closed form with the sums $\rho_i$, and the labels, which come from the Gray code of the negabinary representation, so it is the invariant that validates the construction as a whole.
+(\ref{inv:bfly-closed}), instead, is the defining equation of the generator, so checking it only verifies that the table realizes the formula.
+The distance-halving table of Sec.~\ref{sec:bfly-dhlv} is not covered yet.
+\todo{Tests for the distance-halving schedule, see Sec.~\ref{sec:bfly-dhlv}.}
+
+%==============================================================================
+\section{Experimental results}\label{sec:bfly-results}
+
+\todo{Experimental results.}

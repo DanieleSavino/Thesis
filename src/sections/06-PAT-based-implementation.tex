@@ -207,15 +207,15 @@ All the threads reach the same point at the end, where the strategy can run a ho
 
 \begin{figure}[t]
 \centering
-\begin{tikzpicture}[node distance=0.85cm, >=Stealth, font=\footnotesize,
+\begin{tikzpicture}[node distance=1.7cm, >=Stealth, font=\footnotesize,
     box/.style={draw, rounded corners=2pt, minimum height=1cm, minimum width=2.2cm, align=center, fill=white}]
   \node[box, fill=ch0!15] (gen)  {schedule thread\\ \texttt{getNextOp}};
   \node[box, right=of gen] (ring) {ring\\ \texttt{patSteps}};
   \node[box, fill=ch1!15, right=of ring] (wrk) {workers\\ \texttt{patCopy}};
   \node[box, right=of wrk] (net) {FIFO slots\\ dimension $d$};
-  \draw[->, thick] (gen) -- node[above] {publish} (ring);
-  \draw[->, thick] (ring) -- node[above] {poll} (wrk);
-  \draw[->, thick] (wrk) -- node[above] {send/recv} (net);
+  \draw[->, thick] (gen) -- node[above=1pt] {publish} (ring);
+  \draw[->, thick] (ring) -- node[above=1pt] {poll} (wrk);
+  \draw[->, thick] (wrk) -- node[above=1pt] {send/recv} (net);
   \node[below=0.5cm of ring, font=\footnotesize] {remaining threads: barriers only};
 \end{tikzpicture}
 \caption{Roles of the threads of a channel in \texttt{runBineAgPat}. The schedule thread runs ahead of the workers, limited by the size of the ring.}

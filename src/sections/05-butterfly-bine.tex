@@ -527,18 +527,17 @@ A window of $2^g$ blocks starting at $a$ is at most two runs, $[a,\min(a+2^g,p))
 Sender and receiver visit the runs in the same order, since the window received is the one the partner sends.
 The window start is updated at every step, also when the rank does not take part in it.
 
-\subsection{Invariants}
-
-\todo{Invariants of the distance-halving schedule (symmetry, no self-communication, equality with the reverse of $\Pi$, same window and complementary halves for the partners, final window $\{r\}$) and their tests.}
-
 %==============================================================================
 \section{Testing}\label{sec:bfly-testing}
 
-The schedule is a deterministic function of $p=2^s$, and every property the collectives rely on is a statement about the finite tables $\Pi$, $\nu$ and $\nu^{-1}$.
-We test it exhaustively against the following invariants, for every $p=2^s$ with $1\le s\le 12$ (up to $4{,}096$ ranks), every rank and every step; there is no root to enumerate.
+Both schedules are deterministic functions of $p=2^s$, and every property the collectives rely on is a statement about finite tables.
+We therefore test them exhaustively against a set of invariants, for every $p=2^s$ with $1\le s\le 12$ (up to $2^{12}=4{,}096$ ranks), every rank and every step.
+There is no root to enumerate, so the cost is $O(p\log p)$ lookups per value of $p$, instead of the $O(p^2 s)$ of the tree.
+The tests run on the host and cover the two generators separately: \texttt{ncclGetBineButterflyDdbl}, which produces $\Pi$, $\nu$ and $\nu^{-1}$ (\cref{sec:bfly-impl}), and \texttt{ncclGetBineButterflyDhlv}, which produces $\Pi^{\mathrm{dh}}$ (\cref{sec:bfly-dhlv}).
 
 \subsection{Invariants}
 
+\paragraph{Distance-doubling table.}
 For every $p=2^s$, rank $r$ and step $i\in[0,s-1]$:
 \begingroup
 \renewcommand{\theenumi}{J\arabic{enumi}}
@@ -558,21 +557,84 @@ For every $p=2^s$, rank $r$ and step $i\in[0,s-1]$:
 \end{enumerate}
 \endgroup
 
-\subsection{What they guarantee}
+\paragraph{Distance-halving table.}
+Let $\tau_i=(1-(-2)^{s-i})/3$ as in \cref{sec:bfly-dhlv}, and let $d(r,q)=\min\bigl((q-r)\bmod p,\,(r-q)\bmod p\bigr)$ be the modular distance.
+For every $p=2^s$, rank $r$ and step $i\in[0,s-1]$:
+\begingroup
+\renewcommand{\theenumi}{K\arabic{enumi}}
+\renewcommand{\labelenumi}{\textbf{(\theenumi)}}
+\begin{enumerate}
+  \item \label{inv:dh-sym} \emph{Symmetry.} $\Pi^{\mathrm{dh}}(\Pi^{\mathrm{dh}}(r,i),i)=r$.
+  \item \label{inv:dh-self} \emph{No self-communication.} $\Pi^{\mathrm{dh}}(r,i)\neq r$.
+  \item \label{inv:dh-full} \emph{Full participation.} $\Pi^{\mathrm{dh}}(r,i)\in[0,p-1]$ for every $r$ and $i$ (the generator initialises the table to $-1$, so an entry that is never written is detected).
+  \item \label{inv:dh-parity} \emph{Opposite parity.} $\Pi^{\mathrm{dh}}(r,i)$ and $r$ have different parity.
+  \item \label{inv:dh-closed} \emph{Closed form.} $\Pi^{\mathrm{dh}}(r,i)$ is given by \cref{eq:bfly-dhlv-partner}, with $\tau_i$ computed from the closed form above.
+  \item \label{inv:dh-rev} \emph{Reversal.} $\Pi^{\mathrm{dh}}(r,i)=\Pi(r,s-1-i)$.
+  \item \label{inv:dh-dist} \emph{Modular distance.} $d\bigl(r,\Pi^{\mathrm{dh}}(r,i)\bigr)=\lvert\tau_i\rvert$, and it does not increase with $i$.
+  \item \label{inv:dh-window} \emph{Circular windows.} Let $a_0(r)$ be given by \cref{eq:bfly-dhlv-start}, $g=s-1-i$, and let the window of $r$ before step $i$ be the $2^{g+1}$ blocks starting at $a_i(r)$ (modulo $p$).
+  The rank keeps the upper half if $r$ and $g$ have different parity, and the lower half otherwise, so $a_{i+1}(r)=(a_i(r)+2^g)\bmod p$ in the first case and $a_{i+1}(r)=a_i(r)$ in the second.
+  Then, for $q=\Pi^{\mathrm{dh}}(r,i)$:
+  \begin{enumerate}
+    \item[(a)] $a_i(q)=a_i(r)$: the partners hold the same window;
+    \item[(b)] the half sent by $r$ starts at $a_{i+1}(q)$: it is the half kept by the partner;
+    \item[(c)] after the last step, $a_s(r)=r$: the final window is $\{r\}$.
+  \end{enumerate}
+\end{enumerate}
+\endgroup
 
-\begin{itemize}
-  \item \textbf{(\ref{inv:bfly-sym})--(\ref{inv:bfly-full}): exchange structure.} At each step the ranks form $p/2$ pairs, both ranks of a pair agree on it, and nobody is idle or paired with itself. Sends and receives always match, and the kernels need no branch for ranks that skip a step, unlike the tree (\cref{sec:tree-testing}).
-  \item \textbf{(\ref{inv:bfly-perm}): labels.} The positions $\mathrm{pos}(r)$ are a bijection between ranks and slots, so no block is lost or stored twice.
-  \item \textbf{(\ref{inv:bfly-split}): correct exchange.} The two partners hold the same blocks and each keeps the half the other sends, so after $s$ steps every contribution is combined exactly once. In the position space it says that partners agree above bit $k=s-1-i$ and differ at bit $k$, which makes the exchanged blocks contiguous (\cref{sec:bfly-strategies}) and pos mode channel-closed (\cref{sec:bfly-pos}).
-  \item \textbf{(\ref{inv:bfly-closed}): identification.} (\ref{inv:bfly-sym})--(\ref{inv:bfly-full}) also hold for the standard recursive-doubling butterfly; (\ref{inv:bfly-closed}) fixes the partners and (\ref{inv:bfly-split}) ties them to the positions of the blocks.
-\end{itemize}
+\subsection{Why they hold and what they guarantee}
+
+\paragraph{Exchange structure (\ref{inv:bfly-sym})--(\ref{inv:bfly-full}), (\ref{inv:dh-sym})--(\ref{inv:dh-parity}).}
+Both tables use offsets that are always odd: $\rho_i=\rho_{i-1}+(-2)^i$ with $\rho_0=1$, and $\tau_i$ is the sum of $1$ and of even terms, so they stay odd modulo the even number $p$.
+An even rank adds the offset and an odd rank subtracts it, hence the partner of an even rank is odd, the partner of an odd rank is even (\ref{inv:dh-parity}), and no rank can be its own partner (\ref{inv:bfly-self}, \ref{inv:dh-self}).
+If $r$ is even and $q=r+m$, then $q$ is odd and its partner is $q-m=r$; the case of $r$ odd is symmetric.
+Hence the pairing is an involution (\ref{inv:bfly-sym}, \ref{inv:dh-sym}).
+Both formulas are defined for every rank, so no entry is empty (\ref{inv:bfly-full}, \ref{inv:dh-full}).
+At each step the ranks form $p/2$ pairs, sends and receives always match, and the kernels need no branch for ranks that skip a step, unlike the tree (\cref{sec:tree-testing}).
+
+\paragraph{Labels (\ref{inv:bfly-perm}).}
+The conversion $\rtn$ maps a rank to an $s$-bit negabinary string by value modulo $p$.
+It is a bijection: two different strings, whose lowest differing bit is $j<s$, have values that differ by $2^j$ modulo $2^{j+1}$, hence modulo $p$.
+The least significant bit of $\rtn(x)$ is the parity of $x$.
+Odd ranks take $\rtn(r)$ and are mapped to $p/2$ distinct strings ending in $1$; even ranks take $\rtn(p-r)$, with $r=0$ taking the zero string, and are mapped to the $p/2$ distinct strings ending in $0$.
+So $h$ is a bijection onto the $s$-bit strings, and so is $x\mapsto x\oplus(x\gg1)$, which is the Gray code.
+Therefore no block is lost or stored twice, and $\nu^{-1}$ is well defined.
+
+\paragraph{Correct exchange (\ref{inv:bfly-split}).}
+This is the invariant that ties the partners to the blocks.
+It relates two independent computations, the partners (closed form with the sums $\rho_i$) and the labels (Gray code of the negabinary representation), and it is not implied by the other invariants.
+It says that two partners hold the same blocks and each keeps the half the other sends, so after $s$ steps every contribution is combined exactly once.
+In the position space it says that partners agree above bit $k=s-1-i$ and differ at bit $k$, which makes the exchanged blocks contiguous (\cref{sec:bfly-strategies}) and pos mode channel-closed (\cref{sec:bfly-pos}).
+The stronger statement $\nu(r)\oplus\nu(q)=2^i$ holds only for the tree rooted at rank $0$, which is why the test checks the bits up to $i$ only.
+
+\paragraph{Identifying the tables (\ref{inv:bfly-closed}, \ref{inv:dh-closed}, \ref{inv:dh-rev}).}
+Symmetry, absence of self-communication and full participation also hold for the standard recursive-doubling butterfly, and, for the distance-halving table, also for the table with the two signs exchanged between even and odd ranks.
+The closed forms are what fixes the partners (and, for $\Pi^{\mathrm{dh}}$, the sign), and the reversal (\ref{inv:dh-rev}) ties the two generators together: since $\rho_i=\tau_{s-1-i}$, the distance-halving table must be the distance-doubling one read from the last step to the first.
+The two generators are separate code, so (\ref{inv:dh-rev}) also transfers to $\Pi^{\mathrm{dh}}$ what was checked on $\Pi$.
+
+\paragraph{Locality (\ref{inv:dh-dist}).}
+Since $\lvert\tau_i\rvert=(2^{s-i}\pm1)/3\le p/2$, the modular distance between partners is exactly $\lvert\tau_i\rvert$, about $2/3$ of the $2^{s-i-1}$ of a standard distance-halving butterfly (Eq.~\eqref{eq:bg-bine-bfly-partner} and~\cite{desensi2025bine}).
+The sequence $\lvert\tau_i\rvert$ is $3,1,1$ for $p=8$ and does not increase in general.
+This is the property that gives Bine its advantage, and it does not depend on the sign, so it does not replace (\ref{inv:dh-closed}).
+
+\paragraph{Windows (\ref{inv:dh-window}).}
+This is the semantic check of the distance-halving table as a schedule of the reduce-scatter.
+Before step $i$ a rank holds the contributions to a window of $2^{g+1}$ consecutive blocks modulo $p$, and sends one half to its partner while keeping the other (\cref{sec:bfly-dhlv}).
+Two partners have opposite parity (\ref{inv:dh-parity}), so one keeps the upper half and the other the lower half, and if they hold the same window (a) the half that each sends is the half that the other keeps (b).
+Condition (a) is not implied by the previous ones: at step $i+1$ the new partner of $r$ is given by the table, and it holds the same window as $r$ only if the table and the start $a_0(r)$ of \cref{eq:bfly-dhlv-start} are consistent.
+By induction the window of a rank is halved at each step, from $p$ blocks (the whole buffer, starting at $a_0(r)$) down to one block, which by (c) is block $r$.
+Hence every contribution to a block is combined exactly once and the block ends at its owner, and the allgather, its time reverse, starts from $\{r\}$ and ends with the whole buffer.
+In the test the three conditions are checked for every rank and step by simulating the windows with the rule above.
 
 \subsection{Scope and limits}
 
-The tests cost $O(p\log p)$ lookups per $p$ and cover every power of two up to $2^{12}$; beyond that, correctness relies on the construction.
-(\ref{inv:bfly-split}) relates two independent computations, the partners (closed form with the sums $\rho_i$) and the labels (Gray code of the negabinary representation), so it validates the construction as a whole; (\ref{inv:bfly-closed}) only checks that the table realizes its defining formula.
-The distance-halving table of \cref{sec:bfly-dhlv} is not covered yet.
-\todo{Tests for the distance-halving schedule.}
+The tests are exhaustive over all ranks and steps for every power of two $p\le 2^{12}$, with a cost of $O(p\log p)$ lookups per value of $p$ and per test.
+Beyond this range, correctness relies on the arguments of this section, not on testing.
+They check the schedule only: the kernels, the work partition and the splitting of the circular windows into runs (\cref{sec:bfly-kernels}) are not covered here.
+The oracles are of different strength.
+(\ref{inv:bfly-closed}) recomputes $\rho_i$ with the same recurrence as the generator, so it only checks that the table realizes its defining formula, while (\ref{inv:dh-closed}) uses the closed form of $\tau_i$ and therefore an independent computation.
+(\ref{inv:bfly-split}) and (\ref{inv:dh-window}) are the checks of the construction as a whole.
+(\ref{inv:dh-window}) uses the keep rule and the start $a_0(r)$ of \cref{sec:bfly-dhlv} as oracle, so it validates the table against these rules, and the rules themselves rest on the argument above.
 
 %==============================================================================
 \section{Experimental results}\label{sec:bfly-results}

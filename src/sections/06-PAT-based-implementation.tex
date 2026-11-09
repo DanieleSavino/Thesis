@@ -1,0 +1,297 @@
+% Requires: booktabs, tabularx, amsmath, algorithm + algpseudocode, listings
+% Macros assumed: \Pi \nu \nccl \bine \pat \todo
+\chapter{PAT-Based Implementation}\label{ch:pat}
+
+This chapter describes a second implementation of the \bine{} allgather in \nccl{}.
+It does not change the schedule of Chapter~\ref{ch:butterfly}: the partners, the labels, the four strategies for the non-contiguous data and the invariants are the same.
+What changes is the way the schedule is executed: instead of one \texttt{Primitives} object per step, driven by all the threads of the block, the allgather uses the device-side machinery of \pat{} (Sec.~\ref{sec:nccl-pat}), a schedule thread that feeds a set of workers.
+Only the allgather is implemented so far, for the \texttt{Simple} protocol, which is the only one for which \pat{} exists in \nccl{}.
+
+%==============================================================================
+\section{Motivation}\label{sec:pat-motivation}
+
+The kernels of Sec.~\ref{sec:bfly-kernels} have three costs that depend on the strategy and not on the data.
+\begin{itemize}
+  \item A \texttt{Primitives} object is built at every step, and the steps are separated by a barrier of the whole block.
+  \item When the window of a step is not a single contiguous region, the kernel is on the slow path: one primitive call per block and per chunk, each with its own synchronisation with the peer. This is always the case for block-by-block.
+  \item The pieces in which the window is cut on the fast path (Sec.~\ref{sec:bfly-fast}) have a size that has to be tuned against the capacity of the FIFO.
+\end{itemize}
+The aggregation of \pat{} addresses the second and the third.
+A slot of the FIFO is filled by many operations, each reading a piece from an arbitrary place of the output buffer, and is posted once.
+The non-contiguity of the blocks is therefore absorbed by the local copy into the slot, which is executed by the workers, and the network sees one message per slot whatever the strategy.
+The size of the message is fixed by the slot, and the sequence of operations is produced by a thread that runs ahead of the workers.
+
+%==============================================================================
+\section{Mapping the schedule on \pat{}}\label{sec:pat-mapping}
+
+\paragraph{Same tables.}
+The kernels read the tables of Chapter~\ref{ch:butterfly} from \texttt{channel.bine}: the partners $\Pi$ for send, permute and block-by-block, the distance-halving partners $\Pi^{\mathrm{dh}}$ for double send, and the labels $\nu$ and $\nu^{-1}$ (Sec.~\ref{sec:bfly-impl}, Sec.~\ref{sec:bfly-dhlv}).
+The step $k\in[0,s-1]$ of the allgather is the same as in Algorithm~\ref{alg:bfly-allgather}: the partner is $\Pi(r,s-1-k)$, or $\Pi^{\mathrm{dh}}(r,k')$ with the step order that Sec.~\ref{sec:bfly-dhlv} gives for the circular window, and the window of $g=2^k$ blocks doubles at each step.
+The position of a block is $\mathrm{pos}(r)=\mathrm{rev}(\nu(r))$ and the slots of the output buffer are those of Table~\ref{tab:bfly-strategies}.
+
+\paragraph{Steps as dimensions.}
+The dimension $d$ of \pat{} is the distance $2^d$ between the peers, and it is the same for every rank.
+In the \bine{} butterfly the partner at step $k$ is a rank-dependent offset, but the step still identifies one peer for each rank, and the \pat{} structures only need an index for the peer.
+We therefore use the step as the dimension: the connector of dimension $k$ of a rank points to its partner of step $k$.
+The two quantities that \pat{} computes from the distances, the peer to receive from and the peer to send to, are the same rank here, since the butterfly is symmetric; this is the only change in the constructor of the primitives (Sec.~\ref{sec:pat-prims}).
+
+\paragraph{No one-rank-per-node restriction.}
+The native \pat{} is limited to one rank per node (Sec.~\ref{sec:nccl-pat}), and this restriction is not inherited.
+The peers of the \bine{} allgather are given by the tables of Chapter~\ref{ch:butterfly}, which depend only on the rank numbers, and the connections to them are created by the \bine{} setup as for the other \bine{} collectives, which selects for each pair of ranks the transport that can connect them (Sec.~\ref{sec:nccl-transport}).
+The partners of a rank can therefore be on the same node, on other nodes, or both, and the kernel does not distinguish them.
+
+\paragraph{What is different from \pat{}.}
+Table~\ref{tab:pat-vs-bine} compares the original algorithm with the one implemented here.
+\bine{} replaces the Bruck-like binomial trees with a butterfly, so every step exchanges the whole window with a single partner and the algorithm has no linear phase of its own: when the window of a step is larger than a slot, the step is simply split in more slots, which plays the role of the linear part.
+The allgather still has the property for which \pat{} orders the dimensions farthest first: the steps with the most data are those with the closest partners.
+\bine{} further reduces these distances (Sec.~\ref{sec:bg-bine-butterfly}).
+
+\begin{table}[t]
+\centering
+\footnotesize
+\setlength{\tabcolsep}{4pt}
+\caption{Original \pat{} all-gather and the \bine{} allgather of this chapter.}
+\label{tab:pat-vs-bine}
+\begin{tabularx}{\linewidth}{@{}l X X@{}}
+\toprule
+ & \pat{} (\nccl{}) & \bine{} on \pat{} machinery \\
+\midrule
+Pattern & aggregated binomial trees, any $p$ & \bine{} butterfly, $p=2^s$ \\
+Peer of dimension $d$ & rank at distance $2^d$ & partner of step $d$ (Chapter~\ref{ch:butterfly}) \\
+Local data & kept in the slot and forwarded without copy & always in the output buffer, sent with \texttt{PatSrcOutput} \\
+Operation & receive and send can be fused in one step & each operation either sends or receives \\
+Aggregation & limited by the buffer, then linear phase & a step spans $\lceil\cdot\rceil$ slots (Sec.~\ref{sec:pat-geom}) \\
+Non-contiguous data & not applicable & four strategies (Table~\ref{tab:pat-strategies}) \\
+GPUs per node & one (inter-node part only) & any \\
+Protocols, zero-copy & \texttt{Simple}, no zero-copy & same, inherited from \pat{} \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+%==============================================================================
+\section{Geometry: pieces and slots}\label{sec:pat-geom}
+
+A channel handles the slice $[\texttt{channelOffset},\texttt{channelOffset}+\texttt{channelCount})$ of every block (Sec.~\ref{sec:nccl-cbd}).
+The slice is cut in chunks and every operation moves a \emph{piece}, the part of one chunk of one block.
+Let $E_s$ be the number of elements of a slot, \texttt{slotElems}, i.e., the size of the buffer of \texttt{Simple} divided by \texttt{NCCL\_STEPS} (Sec.~\ref{sec:nccl-transport}).
+For the allgather an element is a byte, and in the default configuration the buffer is $4$\,MiB and a slot $512$\,KiB~\cite{hu2025demystifying}, so $E_s=512$\,KiB.
+The structure \texttt{BineAgGeom} derives, from the values of \texttt{ncclCollCbdPart},
+\begin{align}
+  c &= \min(\texttt{chunkCount},\,E_s), & n_c &= \lceil \texttt{channelCount}/c\rceil,\\
+  \sigma &= \min(\texttt{channelCount},\,c), & P &= \max\bigl(1,\lfloor E_s/\sigma\rfloor\bigr),
+\end{align}
+where $c$ is the chunk, which never exceeds a slot, $n_c$ the number of chunks, $\sigma$ the \emph{stride}, i.e., the space reserved to a piece in the slot, and $P$ the number of pieces per slot.
+At the step $k$ the window has $2^k$ blocks, so the step moves $n_c\,2^k$ pieces; the piece $q\in[0,n_c2^k-1]$ is the chunk $\lfloor q/2^k\rfloor$ of the block $j=q\bmod 2^k$ of the window.
+The pieces are grouped $P$ at a time, and the number of slots of the step is
+\begin{equation}
+  N_k=\Bigl\lceil \frac{n_c\,2^k}{P}\Bigr\rceil,
+  \label{eq:pat-slots}
+\end{equation}
+all full except possibly the last one.
+Piece $q$ is placed in its slot at the offset $(q\bmod P)\,\sigma$.
+This is the same on the sender and on the receiver, since $n_c$, $P$ and $k$ depend only on the work descriptor and on the step, and the order of the pieces is the order of the blocks of the window, which the two partners agree on (invariant~\ref{inv:bfly-split}).
+The pre-step of the strategy \emph{send} (Sec.~\ref{sec:pat-strategies}) uses one slot per chunk.
+
+Two regimes follow from Eq.~\eqref{eq:pat-slots}.
+For small messages the slice is a single chunk, $\sigma=\texttt{channelCount}$ and $P=\lfloor E_s/\texttt{channelCount}\rfloor$ is large: as long as $2^k\le P$ the step is one slot, i.e., one transfer, and the algorithm is latency-optimal with $s$ transfers.
+For large messages $P$ is $1$ and a step moves $n_c2^k$ slots; this is the linear part, which moves full slots and, per channel, $\approx(p-1)\,\texttt{channelCount}/E_s$ slots over all the steps.
+
+%==============================================================================
+\section{Schedule generator}\label{sec:pat-gen}
+
+\subsection{Operation order}
+
+The schedule thread asks a generator, a class with the method \texttt{getNextOp}, for one operation at a time and writes it in an entry of the ring of Sec.~\ref{sec:nccl-pat-impl}.
+There is one class for each strategy (\texttt{BineAGAlgorithm} for send, \texttt{BineAGPermutationAlgorithm}, \texttt{BineAGBlockByBlockAlgorithm}, \texttt{BineAGDoubleSendAlgorithm}), and the four share the structure of Algorithm~\ref{alg:pat-gen}.
+The generator is a state machine, whose state is the stage (pre-step, butterfly, end), the step $k$, the slot $g_i$, and the position inside the slot, so that it can produce one operation per call.
+The order of the operations is the order in which each connection is used, and it has to be the one that the proxy expects (Sec.~\ref{sec:nccl-proxy}); the proxy is the one of the butterfly (Chapter~\ref{ch:butterfly}) and is used unchanged.
+The order is: in the pre-step, for every chunk a send and then a receive, in a step, for every slot, the send of $P$ pieces, posted at the last one, then the receive of $P$ pieces, posted at the last one.
+Sending and receiving alternate slot by slot, so that, as in Sec.~\ref{sec:bfly-fast}, no rank blocks in a send that the partner cannot yet drain.
+
+\begin{algorithm}[H]
+\caption{Operations emitted by the schedule thread (common structure of the four strategies).}
+\label{alg:pat-gen}
+\begin{algorithmic}[1]
+\ForAll{chunks $e$ of the slice}\Comment{pre-step, strategy dependent}
+  \State emit \Call{PreOp}{$e$}
+\EndFor
+\For{$k\gets0$ \textbf{to} $s-1$}
+  \State $(\mathit{sendWin},\mathit{recvWin})\gets$ \Call{Windows}{$k$} \Comment{Table~\ref{tab:pat-strategies}}
+  \For{$g_i\gets0$ \textbf{to} $N_k-1$}
+    \State $\ell\gets\min(P,\ n_c2^k-g_iP)$
+    \For{$u\gets0$ \textbf{to} $\ell-1$}\Comment{send the slot}
+      \State $q\gets g_iP+u$;\quad emit \texttt{send}$(\textsc{Block}(\mathit{sendWin},q\bmod2^k),\ \textsc{Chunk}(q),\ \text{offset}=u\sigma)$
+      \State \textbf{if} $u=\ell-1$ \textbf{then} mark the operation as \emph{postSend}
+    \EndFor
+    \For{$u\gets0$ \textbf{to} $\ell-1$}\Comment{receive the slot}
+      \State $q\gets g_iP+u$;\quad emit \texttt{recv}$(\textsc{Block}(\mathit{recvWin},q\bmod2^k),\ \textsc{Chunk}(q),\ \text{offset}=u\sigma)$
+      \State \textbf{if} $u=\ell-1$ \textbf{then} mark the operation as \emph{postRecv}
+    \EndFor
+  \EndFor
+\EndFor
+\State emit the end marker \Comment{$\texttt{last}=2$}
+\end{algorithmic}
+\end{algorithm}
+
+Each emitted operation has \texttt{sendDim} or \texttt{recvDim} equal to the dimension of the step (Sec.~\ref{sec:pat-mapping}), the offset of the slice \texttt{channelOffset} plus the offset of the chunk, and \texttt{nelem} equal to the length of the piece, shorter for the last chunk.
+A channel with no data emits only the end marker with the \texttt{PatSkipped} flag.
+
+\subsection{Strategies}\label{sec:pat-strategies}
+
+The four generators differ only in the three choices of Table~\ref{tab:bfly-strategies}: the pre-step, the block of a piece, and the post-step.
+Table~\ref{tab:pat-strategies} gives them in terms of the generator; $x=\mathrm{pos}(r)$ is \texttt{myIdx} in the code, and $\textsc{Block}$ is the block of the output buffer that the piece reads from or writes to.
+
+\begin{table}[t]
+\centering
+\footnotesize
+\setlength{\tabcolsep}{4pt}
+\caption{Choices of the generator for the four strategies. $g=2^k$, $b=\lfloor x/2g\rfloor 2g$.}
+\label{tab:pat-strategies}
+\begin{tabularx}{\linewidth}{@{}l X X X X@{}}
+\toprule
+Strategy & Pre-step (per chunk) & Windows at step $k$ & $\textsc{Block}(w,j)$ & Post-step \\
+\midrule
+Send & exchange: send my block, receive into slot $x$; or local copy to slot $r$ if the peer is $r$ & $b$ or $b+g$ according to bit $k$ of $x$ & $w+j$ (position) & -- \\
+Permute & local copy to slot $x$ & as send & $w+j$ & in-place permutation, block $b\leftarrow$ slot $\mathrm{pos}(b)$ \\
+Block-by-block & local copy to slot $r$ & as send & $\nu^{-1}(\mathrm{rev}(w+j))$ & -- \\
+Double send & local copy to slot $r$ & circular window of $g$ blocks, sent half starts at $w_s$, received half adjacent & $(w+j)\bmod p$ & -- \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+\paragraph{Send.}
+The window of the step is the aligned range of position $x$, and the half that is sent is the one that the rank holds: the lower half if bit $k$ of $x$ is $0$, the upper one otherwise, the other being received.
+All the blocks are read from and written to the slot with the same index as their position.
+The pre-step moves the block of each rank to its position: if the rank is its own destination (\texttt{redistTo}$=r$) it is a local copy, otherwise the rank sends its block to $\nu^{-1}(\mathrm{rev}(r))$, and receives into the slot $x$ the block of rank $x$.
+The send is flagged \texttt{PatNoLocalCopy}, since the data is read from the input buffer and no local copy is wanted.
+
+\paragraph{Permute.}
+The blocks are placed at their position with a local copy, the butterfly is the same as for send, and the permutation to natural order is executed after the schedule (Sec.~\ref{sec:pat-permute}).
+
+\paragraph{Block-by-block.}
+The blocks stay in natural order, so the piece $j$ of a window is the block $\nu^{-1}(\mathrm{rev}(w+j))$: the windows are the same as for send, and only the index of the block changes.
+This is the strategy for which aggregation matters most: the blocks are not adjacent, but the pieces are packed in the slot by the workers and travel in one message.
+
+\paragraph{Double send.}
+The generator keeps a circular window: it starts as $\{r\}$ (\texttt{winStart}$=r$), and at the step $k$ the rank sends the current window and receives the adjacent one, below or above according to the parity of $r$ and $k$ (the rule of Eq.~\eqref{eq:bfly-dhlv-start} read forward); the received window is merged in the current one.
+All indices are taken modulo $p$, with the mask $p-1$.
+The dimension of step $k$ is $s-1-k$ of the table $\Pi^{\mathrm{dh}}$, i.e., the partner $\Pi(r,k)$ of Sec.~\ref{sec:bfly-dhlv}, and the schedule needs neither a pre-step nor a post-step beyond the local copy of the own block.
+
+%==============================================================================
+\section{Kernel}\label{sec:pat-kernel}
+
+\paragraph{Structure.}
+The kernel \texttt{runBineAgPat} is the one of \pat{}, instantiated with the generator of the strategy, through a function that builds it from the geometry.
+Algorithm~\ref{alg:pat-kernel} shows it.
+The geometry is derived once from the descriptor, the shared ring is cleared, and the threads are split in three roles: the schedule thread, the workers, and the remaining threads, which do nothing but take part in the barriers.
+All the threads then reach the same point at the end of the function, where the strategy can add a hook that uses \texttt{\_\_syncthreads} (post-step of permute).
+
+\begin{algorithm}[H]
+\caption{\texttt{runBineAgPat}, kernel of one channel.}
+\label{alg:pat-kernel}
+\begin{algorithmic}[1]
+\State $(\mathit{count},\mathit{channelOffset},\mathit{channelCount},\mathit{chunkCount})\gets$ \Call{CollCbdPart}{}
+\State clear the ring \texttt{patSteps}; \textbf{barrier}
+\If{thread is the schedule thread}
+  \State $\mathit{geom}\gets$ \Call{Init}{$s,\mathit{count},\mathit{channelOffset},\mathit{channelCount},\mathit{chunkCount},E_s$}; $\mathit{algo}\gets$ \Call{MakeAlgo}{$\mathit{geom}$}
+  \Repeat
+    \State wait until the entry of the ring is free
+    \State $\mathit{algo}.\texttt{getNextOp}$(entry) \Comment{publishes the entry}
+  \Until{the entry is the last}
+\ElsIf{thread is a worker}
+  \State build \texttt{Primitives} in mode \texttt{primsModeBineAg}
+  \Repeat
+    \State wait until the entry of the ring is published
+    \State \texttt{patCopy}(entry); release the entry
+  \Until{the entry is the last}
+\EndIf
+\State \Call{PostFn}{} \Comment{executed by all the threads}
+\end{algorithmic}
+\end{algorithm}
+
+\paragraph{Differences from \pat{}.}
+Compared with the kernel of the native \pat{} all-gather (Sec.~\ref{sec:nccl-pat-impl}), the ring of descriptors, the number of workers, the polling loops and the call to \texttt{patCopy} are unchanged.
+What is replaced is the generator (\texttt{PatAGAlgorithm} becomes the generator of the strategy), the mode of the primitives (\texttt{primsModePatAg} becomes \texttt{primsModeBineAg}, Sec.~\ref{sec:pat-prims}), and the structure of the function: the body is a template, \texttt{runBineAgPat}, parametrised by the generator and by the post hook, so the four strategies share it.
+The native kernel passes the input and output buffers of the work descriptor to the primitives, and so does this one.
+A single group of workers is used, since the generators return a parallel factor of $1$: all the operations of a channel are executed in order by the same threads, which is what the order of the connections requires.
+Because the protocol is \texttt{ProtoSimple<1,1>}, a chunk is one slice and one step of the connection.
+
+\paragraph{Dispatch.}
+The function that is called for each strategy is a thin wrapper that reads \texttt{channel.bine} (the number of steps \texttt{nDoublingSteps}, the tables) and gives to \texttt{runBineAgPat} the lambda that builds the generator.
+The strategy is selected at run time with the field \texttt{bufferManagement} of the structure, exactly as in Sec.~\ref{sec:bfly-collectives}.
+The wrappers of the four strategies are \texttt{runBineSendPat}, \texttt{runBinePermutationPat}, \texttt{runBineBlockByBlockPat} and \texttt{runBineDoubleSendPat}.
+
+%==============================================================================
+\section{Changes to the \texttt{Simple} primitives}\label{sec:pat-prims}
+
+All the device-side changes are in the \texttt{Simple} protocol (\texttt{prims\_simple.h}), and are of three kinds.
+
+\paragraph{A new mode.}
+The enumeration \texttt{primsMode} gets a value, \texttt{primsModeBineAg}, next to the two of \pat{}.
+The constructor treats it as a \pat{} mode (flag \texttt{PatMode}: five roles, one thread each, state in shared memory, \texttt{patBarrier}), and differs only in how the peers are computed.
+In \pat{} the thread $d$ loads the peers at distance $2^d$.
+In \texttt{primsModeBineAg}, the thread $d<s$ loads the connector of the dimension $d$ with the partner of the step, for send, permute and block-by-block from the table $\Pi$ through \texttt{bineSendPartner}, for double send from $\Pi^{\mathrm{dh}}$ (\texttt{dhlvPartners}).
+Receive peer and send peer are the same rank:
+\begin{lstlisting}[language=C++,caption={Peers of the \texttt{primsModeBineAg} mode (simplified).},label={lst:pat-peers}]
+if (tid < S)
+  recvPeer = sendPeer = isDoubleSend
+      ? bine->dhlvPartners[rank * S + tid]
+      : bineSendPartner(bine->partners, rank, tid, S);
+else if (hasPreStep && tid == S) {      // strategy "send" only
+  BineAgPre pre = bineAgPre(partners, index, order, rank, S);
+  if (pre.recvDim == S) recvPeer = pre.recvPeer;
+  if (pre.sendDim == S) sendPeer = pre.sendPeer;
+}
+\end{lstlisting}
+
+\paragraph{Pre-step peers.}
+The pre-step of \emph{send} exchanges data with two ranks that, in general, are not partners of the butterfly (the rank that gets my block, $\nu^{-1}(\mathrm{rev}(r))$, and the one that gives me mine, $\mathrm{pos}(r)$).
+\texttt{bineAgPre} returns them with their dimension.
+If a pre-step peer coincides with the partner of a step, it takes the dimension of that step; otherwise it takes the extra dimension $s$, served by one more thread.
+The aliasing avoids two connectors, with two copies of the step counter, for the same connection.
+The number of distinct peers of a rank is then at most $s+2$, all of them set up with the rest of the \bine{} connections (Sec.~\ref{sec:nccl-channels}).
+
+\paragraph{Two flags of \texttt{patCopy}.}
+\texttt{patCopy} of \nccl{} handles an operation whose source is the input buffer of the rank, with a local copy to the output buffer.
+The \bine{} allgather needs two more behaviours, selected by flags of the entry:
+\begin{itemize}
+  \item \texttt{PatSrcOutput}: the data to send is read from the output buffer and not from the input buffer.
+  It is the case of every send of the butterfly, where the blocks that are sent, the own one and those received before, are already in \texttt{recvbuff}.
+  \item \texttt{PatNoLocalCopy}: the data is sent without copying it to the output buffer.
+  It is used by the exchange of the pre-step, whose data must not be written in the slot $r$ of the own rank, and implicitly by \texttt{PatSrcOutput}, in which the source is already the output.
+\end{itemize}
+Both are tested where the source of a send with no receive is set.
+When the source is the output buffer, or no local copy is requested, the destination of the copy is the same as the source and the redundant destination is dropped from the list of the \texttt{reduceCopy}, so the operation is a plain read into the slot.
+
+\paragraph{Receive.}
+A received piece is copied from its offset in the slot (\texttt{recvOffset}) to the output buffer at \texttt{outIx}.
+No data is forwarded from the slot: each operation either sends or receives, and the data that has to be sent in a later step is read from the output buffer.
+This costs one local copy per piece, which is the price of the arbitrary position of the pieces, and is not on the critical path of the network.
+
+\paragraph{Limits.}
+These limits are inherited from \pat{}, not specific to this implementation.
+The one-rank-per-node restriction of \pat{} is, instead, not inherited (Sec.~\ref{sec:pat-mapping}).
+The native all-gather exists only for the \texttt{Simple} protocol, and the \pat{} modes are branches of the \texttt{Simple} specialization of \texttt{Primitives}, so there is no \texttt{LL} or \texttt{LL128} variant.
+The native kernel instantiates \texttt{ProtoSimple<1,1>} with \texttt{FanSymmetric}$\langle1\rangle$ and \texttt{Direct}$=0$, and so does this one, so there is no zero-copy path either.
+Supporting other protocols would require porting the \pat{} modes to their primitives, which is outside the scope of this thesis.
+The code is compiled only for architectures with \texttt{\_\_CUDA\_ARCH\_\_}$\ge600$, which provide the block-scope atomics used for the ring.
+
+%==============================================================================
+\section{Post-step of permute}\label{sec:pat-permute}
+
+The strategy \emph{permute} runs the butterfly in the position space, so after the schedule the block of rank $b$ is in the slot $\mathrm{pos}(b)$, and has to go to the slot $b$.
+The function \texttt{bineInPlacePermute} does it with no scratch buffer, restricted to the columns of the slice of the channel.
+For a permutation $f$ of $[0,p-1]$ (here $f(b)=\mathrm{pos}(b)$), it replaces $\texttt{new}[x]=\texttt{old}[f(x)]$ following the cycles of $f$:
+\begin{itemize}
+  \item every cycle is handled by its smallest index, which is found by walking the cycle from each $i$ and stopping at a smaller element; fixed points are skipped;
+  \item for the leader $i$ of a cycle the threads split the \texttt{channelCount} columns, and each thread saves the element of block $i$, moves along the cycle copying $\texttt{old}[f(\mathit{cur})]$ into $\mathit{cur}$, and closes the cycle with the saved element.
+\end{itemize}
+The columns are independent, so no synchronisation is needed inside the permutation.
+The function is called from the hook \texttt{post}, which all the threads of the block execute after the schedule thread and the workers have finished.
+The hook begins with a \texttt{\_\_syncthreads} so that every received piece is visible, and does nothing if the channel has no data.
+Finding the leaders costs $O(\sum_C \lvert C\rvert^2)$ over the cycles $C$ of $f$ for each block, independent of the data, which is negligible against the copy for the sizes in which \emph{permute} is used.
+
+%==============================================================================
+\section{Experimental Results}\label{sec:pat-exp}
+
+\item \todo{Experimental results: comparison with the kernels of Chapter~\ref{ch:butterfly}, the ring and the native \pat{}, for the four strategies.}

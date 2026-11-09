@@ -326,6 +326,7 @@ The way the window is cut into pieces depends on how it is laid out in memory.
   This is always the case for block-by-block, whose blocks are not adjacent in memory, and for every strategy when the slice of the channel does not cover whole blocks.
 \end{itemize}
 The fast path issues fewer and larger primitive calls than the slow path, which pays the overhead of a call for every block of the window and every chunk; the size of a piece is the compromise between this overhead and the data that can be in flight in the FIFO.
+\todo{Tune the size of the piece and measure fast and slow path.}
 
 
 \subsection{Allreduce}\label{sec:bfly-allreduce}

@@ -421,6 +421,16 @@ Under the hood the data movement is done by \texttt{reduceCopy}, a device routin
 It can also be called directly by a kernel, and it is used, with one source and one destination, as a plain copy, for example to copy the local buffer when the input and output buffers are different.
 These operations are heavily tuned for a fixed, small number of peers, such as rings and trees~\cite{hu2025demystifying}; \pat{} and the Bine allgather of Chapter~\ref{ch:pat} drive up to $O(\log p)$ peers per rank through a dedicated mode of the \texttt{Simple} primitives (Sec.~\ref{sec:nccl-pat-impl}).
 
+\paragraph{FIFO cost of a call.}\label{sec:nccl-fifo-cost}
+Every operation of the \texttt{Simple} primitives (all but the \pat{} mode) consumes a fixed number of FIFO steps, independent of the number of elements.
+A call goes through \texttt{SlicePerChunk} slices, and each slice advances the step counter by \texttt{StepPerSlice} on the receive and on the send side; slices left empty because the call has fewer elements than a chunk are still traversed, with size zero, and a call with $n=0$ elements consumes the same steps as a full one.
+The cost of a call is therefore $\texttt{SlicePerChunk}\cdot\texttt{StepPerSlice}$ steps, that is, one chunk of the slot FIFO (Sec.~\ref{sec:nccl-chunks}), and the connection steps are kept aligned to this quantity from one operation to the next.
+Only the data movement and the memory fence depend on the size.
+This has two consequences for new algorithms.
+First, a call must move at most one chunk of data, otherwise it would overrun its slot.
+Second, the proxy (Sec.~\ref{sec:nccl-proxy}) only needs to know the \emph{number of calls} per channel, step and direction, not their sizes, and both ends of a connection must issue the same number of calls, even when some of them are empty.
+The \pat{} mode is different: an operation advances the step only if it closes the slot (\texttt{postSend}, \texttt{postRecv}), see Sec.~\ref{sec:nccl-pat-impl}.
+
 \subsection{Writing a new kernel}
 
 The structure that every kernel in \nccl{} follows, and that the Bine kernels of Chapters~\ref{ch:tree} and~\ref{ch:butterfly} reproduce, can be summarised as

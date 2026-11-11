@@ -1,0 +1,260 @@
+% Uses the macros of the preamble (\nccl, \bine, \pat, \todo, \Send, \Recv, \none, \rtn, \ntr, \bigO,
+% \binepic, \blab, and the colors ch0, ch1, chunkA, chunkB, chunkC, crosslink).
+% It also defines \binerot below; it can be moved to the preamble.
+
+% Bine tree of 8 ranks rooted at t (labels = (relative rank + t) mod 8); the root is highlighted.
+\newcommand{\binerot}[2]{%
+  \begin{tikzpicture}[baseline=(lab.north), x=0.85cm, y=0.75cm,
+      rank/.style={circle, draw, minimum size=0.55cm, inner sep=0pt,
+                   fill=white, font=\scriptsize},
+      e/.style={-{Stealth[length=2mm]}, line width=1.2pt, black!45,
+                shorten >=1pt, shorten <=1pt}]
+    \useasboundingbox (-1.8,0.5) rectangle (2.7,-4.5);
+    \foreach \i/\px/\py in {0/0.7/0, 3/-0.6/-1.1, 7/0.9/-1.1, 1/2.1/-1.1,
+                            4/-1.3/-2.2, 2/-0.1/-2.2, 6/0.9/-2.2, 5/-1.3/-3.3} {
+      \pgfmathtruncatemacro{\rk}{mod(\i+#1,8)}
+      \node[rank] (n\i) at (\px,\py) {\rk};
+    }
+    \foreach \a/\b in {0/3,0/7,0/1,3/4,3/2,7/6,4/5} \draw[e] (n\a) -- (n\b);
+    \pgfmathtruncatemacro{\rt}{mod(#1,8)}
+    \node[rank, draw=crosslink, fill=crosslink!20, thick] at (n0) {\rt};
+    \node[font=\footnotesize, align=center] (lab) at (0.45,-4.1) {#2};
+  \end{tikzpicture}%
+}
+
+\chapter{Tree-Based Allreduce}\label{ch:treeallreduce}
+This chapter implements the allreduce of \bine{} in \nccl{} as a reduce followed by a broadcast on the same Bine tree, executed by a single kernel.
+It reuses the tables of \cref{ch:tree} and the structure of the \nccl{} tree allreduce (\cref{sec:nccl-tree}).
+\Cref{sec:tar-motivation} explains why this algorithm is a good fit for \nccl{}, \cref{sec:tar-schedule} how the tree is chosen for each channel, and \cref{sec:tar-kernel} how the kernel works.
+%==============================================================================
+\section{Motivation}\label{sec:tar-motivation}
+\paragraph{The allreduce of the butterfly.}
+For large vectors, the allreduce of \bine{} is a reduce-scatter followed by an allgather on the Bine butterfly, and for small vectors a recursive doubling in which the whole vector is exchanged at every step~\cite{desensi2025bine}.
+Both follow the schedule of \cref{ch:butterfly}.
+In a butterfly each step moves a different amount of data, with a different partner: the window that a rank sends is half of the previous one in the reduce-scatter and twice as large in the allgather.
+\nccl{} is organised differently.
+The work is split among the channels once, by the host, before the kernel starts (\cref{sec:nccl-cbd}), and the connections of a channel are fixed at the creation of the communicator (\cref{sec:nccl-channels}); \nccl{} does not repartition the data among the channels from one step to the next.
+A channel works on a fixed slice of the vector, so the blocks of a window are either cut in slices that are spread in the buffer, and are sent as many small pieces, or are assigned whole to the channels by a second partition (the \emph{slice} and \emph{pos} modes of \cref{sec:bfly-pos}), which is valid only for some strategies.
+\Cref{ch:pat} goes around the same constraint in a different way, by aggregating the pieces in the slots of the FIFO with the machinery of \pat{} (\cref{sec:pat-motivation}).
+Both solutions add machinery for the non-contiguous data, which is the cost of an algorithm in which the size of the transfers changes at every step.
+\paragraph{The tree.}
+The broadcast and the reduce of \cref{ch:tree} do not have this problem.
+At every step in which a rank takes part, it sends or receives the \emph{whole} slice of its channel, and the same slice, in chunks, at each level of the tree.
+The amount of data per edge is fixed, so the partition of \nccl{} fits without changes: no second partition, no permutation of the blocks, no staging buffer and no schedule thread.
+An allreduce built as a reduce followed by a broadcast inherits this property.
+The structure is shown in \cref{fig:tar-tree}: the reduce and the broadcast use the same edges, in opposite directions.
+The composition is not one of the two allreduce algorithms of the Bine paper, which are based on the butterfly (Sec.~4.4 of~\cite{desensi2025bine}); it combines the reduce and the broadcast for small vectors that the paper defines on the distance-halving Bine tree (Sec.~4.5 of~\cite{desensi2025bine}), and the allreduce as a reduce followed by a broadcast is the one of \cref{sec:bg-collectives}.
+\begin{figure}[t]
+  \centering
+  \binepic{reduce (leaves first)}{%
+    \blab{5}{4}{1}{ch0}\blab{2}{3}{1}{ch0}\blab{6}{7}{1}{ch0}\blab{1}{0}{1}{ch0}%
+    \blab{4}{3}{2}{ch0}\blab{7}{0}{2}{ch0}%
+    \blab{3}{0}{3}{ch0}}\hfill
+  \binepic{broadcast (root first)}{%
+    \blab{0}{3}{1}{ch1}%
+    \blab{0}{7}{2}{ch1}\blab{3}{4}{2}{ch1}%
+    \blab{0}{1}{3}{ch1}\blab{3}{2}{3}{ch1}\blab{7}{6}{3}{ch1}\blab{4}{5}{3}{ch1}}
+  \caption{The allreduce on the Bine tree rooted at rank $0$ ($p=8$): the reduce
+           (left, blue) and the broadcast (right, orange) use the same edges in opposite
+           directions. Each edge carries the same chunks of the same slice, and the
+           numbers are the time slots of one chunk.}
+  \label{fig:tar-tree}
+\end{figure}
+\paragraph{Cost.}
+The tree has $s=\log_2p$ levels and the same cost model as the binomial tree (\cref{sec:bg-bine}).
+In \nccl{} the vector is pipelined in chunks along the tree, as in \cref{sec:bg-double-tree}, but the Bine tree is a binomial tree and not a binary one: the root has $s$ children and sends each chunk $s$ times, so the bandwidth term of a channel remains $\bigO{s\,n\beta}$ (\cref{sec:tree-collectives}).
+The number of children of the other ranks is smaller: $u(r)-1$ for rank $r$ (\cref{sec:tree-collectives}).
+To avoid that the same rank has the largest fan-out in all the channels, the root of the tree is not fixed but depends on the channel (\cref{sec:tar-schedule}).
+The combination of two complementary Bine trees, as in the double binary tree of \cref{sec:bg-double-tree}, is left as future work.
+%==============================================================================
+\section{Schedule}\label{sec:tar-schedule}
+The peers are those of the Bine tree of \cref{sec:tree-impl}.
+The root-$0$ tables $\Send$ and $\Recv$ are stored in \texttt{channel.bine}, and the tree rooted in $t\neq0$ is obtained by rotating the ranks by $t$ as in \cref{sec:tree-root}.
+As in \cref{ch:tree}, the schedule is defined for $p=2^s$ ranks.
+In the kernel, a rank obtains its place in the tree of its channel with
+\begin{center}\small
+\texttt{ncclBineArRoot}$(\mathit{channelId},p)\;\rightarrow\;t,$\\
+\texttt{ncclBineArTreeNeighbors}$(\Send,\Recv,p,s,t,r)\;\rightarrow\;(\mathit{parent},\mathit{children},n_c).$
+\end{center}
+The first function gives the root of the tree used by the channel, and the second reads the tables and returns the parent of the rank, or $-1$ if it is the root, and its $n_c$ children, at most \texttt{BINE\_AR\_MAX\_FAN}.
+By \cref{eq:recv-table,eq:send-table}, for the tree rooted in $t$ and the rank $r'=(r-t)\bmod p$ relative to the root, the parent is $\pi_{i_{r'}}(r')$ and the children are $\{\pi_i(r')\mid i_{r'}<i\le s-1\}$, rotated back by $t$.
+A rank can then be the root, a leaf ($n_c=0$) or an internal rank of the tree, and the role changes from channel to channel, since the root does.
+The root of channel $c$ is the bit reversal of $c \bmod p$ on $s$ bits (for $p=8$: $0,4,2,6,\dots$ for channels $0,1,2,3,\dots$), so that even the first few channels, when they are fewer than the ranks, have roots far apart and load different links; for $p$ not a power of two it is $c\bmod p$.
+\Cref{fig:tar-roots} shows the trees of the first channels.
+\begin{figure}[t]
+  \centering
+  \binerot{0}{channel $0$, $t=0$}\hfill
+  \binerot{4}{channel $1$, $t=4$}\hfill
+  \binerot{2}{channel $2$, $t=2$}
+  \caption{Tree of each channel for $p=8$. The root of channel $c$ (in red) is the bit
+           reversal of $c$ on $s$ bits ($0,4,2,6,\dots$), and the tree is the one rooted
+           in $0$ with the ranks rotated by $t$. Even the first channels have roots far
+           apart, and the role of a rank (root, internal, leaf) changes from channel to
+           channel.}
+  \label{fig:tar-roots}
+\end{figure}
+The array of the children is padded with $-1$, which the \texttt{Primitives} take as the end of the peers, and its size, \texttt{BINE\_AR\_MAX\_FAN}, is fixed at compile time to $20$.
+The root has $s$ children, so this covers up to $2^{20}$ ranks, far more than any communicator, and the larger fan has a negligible cost, since it only enlarges the array of the peers.
+Since the connections of a channel are created at the creation of the communicator (\cref{sec:nccl-channels}), the setup has to create, for each channel, the connections towards the parent and towards all the children of the tree rooted in the root of that channel.
+%==============================================================================
+\section{Kernel}\label{sec:tar-kernel}
+The kernel, \texttt{runBineTree}, follows the structure of the \nccl{} tree allreduce (\texttt{runTreeSplit}, \cref{sec:nccl-tree}).
+It is a template on the protocol, and runs one block per channel.
+\paragraph{Slice and roles.}
+The block obtains its slice with \texttt{ncclCollCbdPart} (\cref{sec:nccl-cbd}) and returns at once if the slice is empty: a channel with no data does not take part in the operation, and the proxy registers no operation for it.
+It then computes the root, the parent and the children as in \cref{sec:tar-schedule}.
+If the rank has neither parent nor children, the communicator has a single rank, and the kernel only copies the slice from \texttt{sendbuff} to \texttt{recvbuff} when they differ.
+\Cref{fig:tar-roles} shows the three roles that a rank can have.
+\paragraph{Root.}
+The root has no parent: for each chunk the reduce ends and the broadcast starts at the same rank.
+All the threads of the block execute a single fused primitive, \texttt{recvReduceCopySend}, built with \texttt{FanSymmetric}$\langle\texttt{BINE\_AR\_MAX\_FAN}\rangle$ with the children as the peers on both sides: for each chunk, it receives the chunk from all the children, combines it with its own input, writes the result in \texttt{recvbuff} and sends it to all the children.
+The post-operation of the reduction (for example, the division of the average) is applied here, once, by passing \texttt{postOp}$=$\texttt{true}.
+\paragraph{Non-root ranks.}
+The other ranks split the threads of the block in two groups, as \nccl{} does for its tree: with \texttt{Simple} the first half, plus $64$ threads when the half is at least $256$ threads, and with LL and LL128 about $70\,\%$ of the threads, rounded to a whole number of warps, since receiving from several children is more expensive than sending to them.
+\begin{itemize}
+  \item The \emph{reduce} group, $\texttt{FanAsymmetric}\langle\texttt{BINE\_AR\_MAX\_FAN},1\rangle$, receives from the children and sends to the parent.
+  A leaf sends its input with \texttt{send}; an internal rank calls \texttt{recvReduceSend}, which receives the chunk from all its children, combines them with its own input and sends the result to the parent.
+  \item The \emph{broadcast} group, $\texttt{FanAsymmetric}\langle1,\texttt{BINE\_AR\_MAX\_FAN}\rangle$, receives from the parent and sends to the children.
+  A leaf calls \texttt{recv}, which writes the chunk in \texttt{recvbuff}; an internal rank calls \texttt{recvCopySend}, which writes the chunk in \texttt{recvbuff} and forwards it to its children.
+\end{itemize}
+The two \texttt{Primitives} objects have different group identifiers (offset by \texttt{Proto::Max\allowbreak GroupWidth}), so that the synchronisation of one group does not involve the threads of the other.
+As in \nccl{}, both are instantiated with \texttt{Direct}$=1$, so that the zero-copy path is available (\cref{sec:nccl-tree}).
+Table~\ref{tab:tar-calls} lists the operations of each role, and \cref{alg:tar} the kernel.
+\begin{figure}[t]
+  \centering
+  \resizebox{\linewidth}{!}{%
+  \begin{tikzpicture}[font=\small, >={Stealth[length=2.2mm]},
+    grp/.style={draw, thick, rounded corners=2pt, minimum height=1.0cm,
+                align=center, font=\scriptsize},
+    peer/.style={draw, rounded corners=2pt, minimum height=0.6cm, align=center,
+                 fill=black!6, font=\footnotesize},
+    up/.style={->, thick, ch0}, down/.style={->, thick, ch1}]
+
+    % ---- root ----
+    \node[font=\small\bfseries] at (0,5.1) {root};
+    \node[grp, minimum width=3.6cm, draw=crosslink, fill=crosslink!10] (R) at (0,2)
+      {\texttt{recvReduceCopySend}\\all threads};
+    \node[peer, minimum width=3.6cm] (cR) at (0,-0.5) {children};
+    \draw[up]   ([xshift=-0.7cm]cR.north) -- ([xshift=-0.7cm]R.south);
+    \draw[down] ([xshift=0.7cm]R.south)   -- ([xshift=0.7cm]cR.north);
+
+    % ---- internal rank ----
+    \node[font=\small\bfseries] at (6.5,5.1) {internal rank};
+    \node[peer, minimum width=6.6cm] (pI) at (6.5,4) {parent};
+    \node[grp, minimum width=3.0cm, draw=ch0, fill=ch0!15] (RdI) at (4.7,2)
+      {\texttt{recvReduceSend}\\reduce group};
+    \node[grp, minimum width=3.0cm, draw=ch1, fill=ch1!15] (BcI) at (8.3,2)
+      {\texttt{recvCopySend}\\broadcast group};
+    \node[peer, minimum width=6.6cm] (cI) at (6.5,-0.5) {children};
+    \draw[up]   (cI.north -| RdI) -- (RdI.south);
+    \draw[up]   (RdI.north) -- (RdI.north |- pI.south);
+    \draw[down] (pI.south -| BcI) -- (BcI.north);
+    \draw[down] (BcI.south) -- (BcI.south |- cI.north);
+
+    % ---- leaf ----
+    \node[font=\small\bfseries] at (13.1,5.1) {leaf};
+    \node[peer, minimum width=4.6cm] (pL) at (13.1,4) {parent};
+    \node[grp, minimum width=2.2cm, draw=ch0, fill=ch0!15] (RdL) at (11.9,2)
+      {\texttt{send}\\reduce group};
+    \node[grp, minimum width=2.2cm, draw=ch1, fill=ch1!15] (BcL) at (14.3,2)
+      {\texttt{recv}\\broadcast group};
+    \node[peer, minimum width=2.2cm] (sb) at (11.9,-0.5) {\texttt{sendbuff}};
+    \node[peer, minimum width=2.2cm] (rb) at (14.3,-0.5) {\texttt{recvbuff}};
+    \draw[up]   (sb.north) -- (RdL.south);
+    \draw[up]   (RdL.north) -- (RdL.north |- pL.south);
+    \draw[down] (pL.south -| BcL) -- (BcL.north);
+    \draw[down] (BcL.south) -- (rb.north);
+
+    % thread blocks
+    \begin{scope}[on background layer]
+      \node[draw, dashed, rounded corners=3pt, inner sep=6pt, fit=(R)] {};
+      \node[draw, dashed, rounded corners=3pt, inner sep=6pt, fit=(RdI)(BcI)] {};
+      \node[draw, dashed, rounded corners=3pt, inner sep=6pt, fit=(RdL)(BcL)] {};
+    \end{scope}
+  \end{tikzpicture}}
+  \caption{Roles of a rank in \texttt{runBineTree}. Dashed frames are the thread block
+           of the channel. Blue arrows are the reduce, orange arrows the broadcast.
+           All roles read \texttt{sendbuff} and write \texttt{recvbuff}, which is
+           shown only for the leaf.}
+  \label{fig:tar-roles}
+\end{figure}
+\begin{table}[t]
+\centering
+\small
+\caption{Operations of the Bine tree allreduce for each role. The reduce and the broadcast are executed by two groups of threads of the same block, except at the root.}
+\label{tab:tar-calls}
+\begin{tabular}{@{}lll@{}}
+\toprule
+Role & Reduce group & Broadcast group \\
+\midrule
+Root     & \multicolumn{2}{c}{\texttt{recvReduceCopySend} (all threads)} \\
+Internal & \texttt{recvReduceSend} & \texttt{recvCopySend} \\
+Leaf     & \texttt{send}           & \texttt{recv} \\
+\bottomrule
+\end{tabular}
+\end{table}
+\begin{algorithm}[t]
+\caption{Bine tree allreduce (\texttt{runBineTree}, one block per channel).}
+\label{alg:tar}
+\begin{algorithmic}[1]
+\State $(\mathit{grid},\mathit{count},\mathit{chunk}) \gets$ \Call{CollCbdPart}{};\quad \textbf{if} $\mathit{count}=0$ \textbf{then return}
+\State $t \gets$ \Call{Root}{channel};\quad $(\mathit{parent},\mathit{children}) \gets$ \Call{TreeNeighbors}{$t,r$}
+\If{$\mathit{parent}<0 \wedge \mathit{children}=\emptyset$}
+  \State copy the slice from \texttt{sendbuff} to \texttt{recvbuff} if they differ;\quad \textbf{return}
+\EndIf
+\If{$\mathit{parent}<0$}\Comment{root: all threads}
+  \For{each chunk $(o,n)$ of the slice}
+    \State \texttt{recvReduceCopySend}$(o,o,n)$
+  \EndFor
+\ElsIf{$\mathit{tid}<n_{\mathrm{split}}$}\Comment{reduce group}
+  \For{each chunk $(o,n)$ of the slice}
+    \State \textbf{if} $\mathit{children}=\emptyset$ \textbf{then} \texttt{send}$(o,n)$ \textbf{else} \texttt{recvReduceSend}$(o,n)$
+  \EndFor
+\Else\Comment{broadcast group}
+  \For{each chunk $(o,n)$ of the slice}
+    \State \textbf{if} $\mathit{children}=\emptyset$ \textbf{then} \texttt{recv}$(o,n)$ \textbf{else} \texttt{recvCopySend}$(o,n)$
+  \EndFor
+\EndIf
+\end{algorithmic}
+\end{algorithm}
+\paragraph{Loop order.}
+Both groups loop over the chunks of the slice, and no loop over the steps of the tree is needed: the primitive of an internal rank receives from all its children at once, and a rank is a single object for its whole life.
+This differs from the reduce of \cref{ch:tree}, which is \emph{step-outer}: there a rank processes the whole slice from one child before moving to the next, and the levels of the tree run essentially in series (\cref{fig:bine-loop-order}).
+Here a chunk is reduced by an internal rank and sent to the parent before the following chunk is started, so the levels of the tree, and the reduce and the broadcast, work on different chunks at the same time, and the \texttt{Primitives} are constructed once instead of once per step.
+\Cref{fig:tar-pipeline} shows how the chunks overlap.
+\begin{figure}[t]
+  \centering
+  \resizebox{\linewidth}{!}{%
+  \begin{tikzpicture}[font=\footnotesize,
+    cell/.style={draw, minimum width=0.9cm, minimum height=0.5cm, inner sep=0pt}]
+    \foreach \row/\txt in {
+        0/{root: \texttt{recvReduceCopySend}},
+        1/{internal, reduce: \texttt{recvReduceSend}},
+        2/{internal, broadcast: \texttt{recvCopySend}},
+        3/{leaf, reduce: \texttt{send}},
+        4/{leaf, broadcast: \texttt{recv}}}
+      \node[anchor=east] at (-0.1,-0.6*\row) {\txt};
+    \foreach \t in {0,...,6}
+      \node[font=\scriptsize, gray] at (0.9*\t+0.45,0.55) {\t};
+    \foreach \ck/\ccol/\clab in {0/chunkA/a, 1/chunkB/b, 2/chunkC/c} {
+      \foreach \stage/\srow in {0/3, 1/1, 2/0, 3/2, 4/4} {
+        \pgfmathsetmacro{\cx}{0.9*(\ck+\stage)+0.45}
+        \pgfmathsetmacro{\cy}{-0.6*\srow}
+        \node[cell, fill=\ccol!60] at (\cx,\cy) {\clab};
+      }
+    }
+    \draw[->, thick] (0,-3.1) -- (6.5,-3.1) node[right] {time};
+  \end{tikzpicture}}
+  \caption{Pipelining of three chunks ($a$, $b$, $c$) along a path from a leaf to the
+           root and back, with one internal rank and one chunk per time unit (longer
+           paths add stages). A chunk goes up to the root and down again while the
+           following chunks are already on their way, so the levels of the tree and the
+           two groups of threads work at the same time.}
+  \label{fig:tar-pipeline}
+\end{figure}
+\paragraph{In-place operation.}
+The reduce group reads the chunk of \texttt{sendbuff} and the broadcast group writes the same chunk of \texttt{recvbuff}, and the two may be the same buffer.
+This is safe without synchronisation between the groups: a chunk of the result reaches a rank only after the root has combined the contributions of all the ranks, and therefore only after this rank has already read its own input for that chunk and sent it to the parent.
+%==============================================================================
+\section{Experimental results}\label{sec:tar-results}
+\todo{results of the tree allreduce.}

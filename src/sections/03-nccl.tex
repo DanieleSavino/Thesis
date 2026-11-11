@@ -1,7 +1,7 @@
 \chapter{NCCL}\label{ch:nccl}
 
 This chapter describes the parts of \nccl{}~\cite{nccl} that the rest of the thesis relies on.
-It is not a complete description of the library: it follows a collective from the moment it is issued to the moment the data is moved, and introduces, in this order, the topology graph (Sec.~\ref{sec:nccl-graph}), the channels (Sec.~\ref{sec:nccl-channels}), the transports, the proxy, the protocols (Sec.~\ref{sec:nccl-protocols}), the algorithms (Sec.~\ref{sec:nccl-algorithms}), the way the work is distributed across channels (Sec.~\ref{sec:nccl-cbd}), the device-side primitives that the kernels are written with (Sec.~\ref{sec:nccl-primitives}), and finally the \pat{} algorithm (Sec.~\ref{sec:nccl-pat}), whose device-side machinery is reused in Chapter~\ref{ch:pat}.
+It is not a complete description of the library: it follows a collective from the moment it is issued to the moment the data is moved, and introduces, in this order, the topology graph (Sec.~\ref{sec:nccl-graph}), the channels (Sec.~\ref{sec:nccl-channels}), the transports, the proxy, the protocols (Sec.~\ref{sec:nccl-protocols}), the algorithms (Sec.~\ref{sec:nccl-algorithms}), the way the work is distributed across channels (Sec.~\ref{sec:nccl-cbd}), the device-side primitives that the kernels are written with (Sec.~\ref{sec:nccl-primitives}), the tree algorithm (Sec.~\ref{sec:nccl-tree}), whose structure is followed by the allreduce of Chapter~\ref{ch:treeallreduce}, and finally the \pat{} algorithm (Sec.~\ref{sec:nccl-pat}), whose device-side machinery is reused in Chapter~\ref{ch:pat}.
 The functions and data structures used by the Bine kernels in the following chapters are defined here and referenced from there.
 For a more detailed analysis of the library see~\cite{hu2025demystifying}.
 The source excerpts and names refer to the \nccl{} code base the thesis was developed on, and some of them (flag names, internal helpers) can change between versions.
@@ -32,7 +32,7 @@ The search produces, for every pattern, a number of \emph{channels} and, for eve
 Two graphs are of interest in this thesis.
 \begin{itemize}
   \item The \emph{ring graph}: each channel is a ring that visits all the ranks; inside a node the order of the GPUs follows the fastest links, and between nodes the ring leaves from and enters into the GPUs closest to a network interface.
-  \item The \emph{tree graph}: inside a node the GPUs are connected in a chain, and the nodes are connected to each other with a double binary tree, in which every node is a leaf in one of the two trees and an internal node in the other, so that the load on the links is balanced (see~\cite{hu2025demystifying}).
+  \item The \emph{tree graph}: inside a node the GPUs are connected in a chain, and the nodes are connected to each other with a double binary tree, in which every node is a leaf in one of the two trees and an internal node in the other, so that the load on the links is balanced (see~\cite{hu2025demystifying} and Sec.~\ref{sec:nccl-tree}).
 \end{itemize}
 The results of the search are stored in the per-channel structures \texttt{ncclRing} and \texttt{ncclTree}, which record for each rank its predecessor and successor in the ring, and its parent and children in the tree.
 These are the peers that the kernels read to know whom to send to and receive from.
@@ -247,7 +247,7 @@ In the code the protocol is a template parameter of the kernels, and it is chose
 \section{Algorithms}\label{sec:nccl-algorithms}
 
 An \emph{algorithm} defines the communication pattern.
-The ones relevant here are \emph{ring} (each rank communicates only with its predecessor and successor, and data circulates around the ring: $\bigO{p}$ steps for $p$ ranks), \emph{tree} (the double binary tree of Sec.~\ref{sec:nccl-graph}, $\bigO{\log p}$ steps across nodes) and \pat{}~\cite{jeaugey2025pat} for all-gather and reduce-scatter (Sec.~\ref{sec:nccl-pat}).
+The ones relevant here are \emph{ring} (each rank communicates only with its predecessor and successor, and data circulates around the ring: $\bigO{p}$ steps for $p$ ranks), \emph{tree} (the double binary tree of Sec.~\ref{sec:bg-double-tree}, used for the allreduce, $\bigO{\log p}$ steps across nodes, Sec.~\ref{sec:nccl-tree}) and \pat{}~\cite{jeaugey2025pat} for all-gather and reduce-scatter (Sec.~\ref{sec:nccl-pat}).
 Algorithms for in-network reduction (\texttt{NVLS}, \texttt{CollNet}) exist as well.
 For every algorithm and collective there is a device function that implements the pattern, and a \emph{pattern} identifier (\texttt{ncclPattern\_t}) used by the host to compute the number of steps and the chunking.
 The Bine algorithms of Chapters~\ref{ch:tree} and~\ref{ch:butterfly} are new device functions of this kind, registered as a new algorithm, \texttt{NCCL\_ALGO\_BINE}, with its own pattern identifier (\texttt{ncclPatternBine}); the Bine allgather of Chapter~\ref{ch:pat} reuses the device-side machinery of \pat{}.
@@ -441,6 +441,44 @@ The structure that every kernel in \nccl{} follows, and that the Bine kernels of
 \end{enumerate}
 The pattern of the communication of each step is therefore the only part that is specific to the algorithm, which is the part that the Bine schedule replaces.
 
+\section{The tree algorithm}\label{sec:nccl-tree}
+The tree is the algorithm that \nccl{} offers, next to the ring, for the allreduce.
+It is the double binary tree described in \cref{sec:bg-double-tree}.
+This section describes how it is built and executed in the library, since the allreduce of \cref{ch:treeallreduce} follows the same structure of the kernel.
+\paragraph{Structure.}
+The branching is built only across nodes, with the two complementary trees of \cref{sec:bg-double-tree}, while inside a node the GPUs are linked in a chain~\cite{hu2025demystifying}.
+A rank therefore has at most one parent (\texttt{up}) and a small number of children (\texttt{down}): the two children of the binary tree plus the next GPU of the chain, which is why the arrays of the \texttt{ncclTree} structure of the channel have \texttt{NCCL\_MAX\_TREE\_ARITY} entries, and the root has at most \texttt{NCCL\_MAX\_TREE\_ARITY\_TOP}.
+A rank with \texttt{up}$=-1$ is the root, and a rank with \texttt{down[0]}$=-1$ is a leaf.
+Each channel runs the allreduce on one of the two trees, and the channels are divided between the two, so that a rank is an internal node in some channels and a leaf in the others, which balances the traffic among the ranks.
+\paragraph{Kernel.}
+The allreduce is a reduce towards the root followed by a broadcast from the root.
+The kernel does not run the two phases one after the other: the threads of the block are split in two groups, and the first executes the reduce while the second executes the broadcast on the chunks that the reduce has already completed (\texttt{runTreeSplit}).
+With the \texttt{Simple} protocol the block is divided in two halves, with $64$ more threads to the reduce when the half is at least $256$ threads, whereas with LL and LL128 the reduce gets about $70\,\%$ of the threads, rounded to a whole number of warps, since receiving from up to three peers costs more than sending to up to three.
+The root is the exception: it has no parent, the reduce and the broadcast are the same operation on the same chunk, and all the threads execute a single fused primitive.
+Table~\ref{tab:nccl-tree-calls} lists the primitives used by each role.
+Each of them is executed for every chunk of the slice of the channel (\cref{sec:nccl-chunks}), so that consecutive chunks follow each other along the tree and the levels work concurrently, as in the pipelined tree of \cref{sec:bg-double-tree}.
+\begin{table}[t]
+\centering
+\small
+\caption{Primitives of the \nccl{} tree allreduce for each role (\texttt{runTreeSplit}; the \texttt{direct} prefix is omitted). The reduce and the broadcast are executed by two different groups of threads, except at the root.}
+\label{tab:nccl-tree-calls}
+\begin{tabular}{@{}lll@{}}
+\toprule
+Role & Reduce (towards the root) & Broadcast (from the root) \\
+\midrule
+Root     & \multicolumn{2}{c}{\texttt{recvReduceCopySend} (all threads)} \\
+Internal & \texttt{recvReduceSend}  & \texttt{recvCopySend} \\
+Leaf     & \texttt{send}            & \texttt{recv} \\
+\bottomrule
+\end{tabular}
+\end{table}
+The operations are the fused ones of \cref{sec:nccl-primitives}, with a fan up to three on the side that has more peers.
+For example, in \texttt{recvReduceSend} the rank receives the chunk from each of its children, combines them with its own data and sends the result to the parent in a single pass, and the root receives from its children, reduces, writes the result in the output buffer and sends it to the same children.
+Both phases are instantiated with the zero-copy path enabled (\texttt{Direct}$=1$) even when the data is staged, because an object has to be able to exchange the direct pointers with a peer that uses them, or the two sides would block.
+On some combinations of CUDA version and GPU architecture the kernel falls back to \texttt{runTreeUpDown}, in which the same threads execute the reduce for the whole slice and then the broadcast.
+\paragraph{Data per edge.}
+Every edge of the tree transfers the same chunks of the same slice, from the first chunk to the last, and the slice of a channel is fixed before the kernel starts (\cref{sec:nccl-cbd}).
+The tree algorithm therefore never needs to change the amount of data that a channel handles from one level to the next, a property that the butterflies do not have (\cref{ch:butterfly}) and that is used in \cref{ch:treeallreduce}.
 \section{The PAT algorithm}\label{sec:nccl-pat}
 
 \pat{} (\emph{Parallel Aggregated Trees})~\cite{jeaugey2025pat} is the algorithm that \nccl{} offers, next to the ring, for the all-gather and the reduce-scatter.

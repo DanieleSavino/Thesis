@@ -2,7 +2,7 @@
 \chapter{Background and Related Work}\label{ch:background}
 
 This chapter introduces collective operations and the algorithms that the rest of the thesis builds on.
-It describes the ring and the standard binomial tree, which are the baselines of the thesis, and the Bine tree~\cite{desensi2025bine}, which is the algorithm implemented in \nccl{} in the following chapters.
+It describes the ring, the standard binomial tree and the double binary tree used by \nccl{}, which are the baselines of the thesis, the butterfly, and the Bine tree~\cite{desensi2025bine}, which is the algorithm implemented in \nccl{} in the following chapters.
 The notation introduced here is used throughout the thesis.
 
 %==============================================================================
@@ -43,6 +43,8 @@ $p$ & Number of ranks. \\
 $r$ & Rank identifier, $r\in[0,p-1]$. \\
 $t$ & Rank identifier of the root of the collective. \\
 $n$ & Size of the vector of the collective, in bytes. \\
+$k$ & Number of chunks in which the vector is split for pipelining. \\
+$d$ & Depth of a tree (edges from the root to the deepest leaf); $d=s$ for the trees of this chapter. \\
 $s$ & Number of steps of a tree algorithm, $s=\log_2 p$ ($p$ a power of two). \\
 $\alpha,\beta,\gamma$ & Latency, time per byte transferred, time per byte reduced. \\
 $\oplus$ & Bitwise exclusive or (XOR). \\
@@ -178,7 +180,7 @@ Its weakness is the number of steps: the performance is suboptimal for large num
 %------------------------------------------------------------------------------
 \subsection{Binomial tree}\label{sec:bg-tree}
 
-Here, \emph{tree} always means the standard binomial tree, not the double binary tree used by \nccl{} (Sec.~\ref{sec:nccl-graph}).
+Here, \emph{tree} always means the standard binomial tree, not the double binary tree used by \nccl{}, which is described in Sec.~\ref{sec:bg-double-tree}.
 
 \paragraph{Construction.}
 A binomial tree of order $0$ is a single node.
@@ -364,6 +366,126 @@ Crossover $x^\ast$        & 8.0         & 8.7         & 12.0        & 17.8      
 The model assumes that the number of chunks is free and that all links are equal.
 In \nccl{} the chunk is bounded by the size of a slot (Sec.~\ref{sec:nccl-chunks}), so a small message is a single chunk and the ring behaves as in the $k=1$ case.
 The model also ignores the network topology, which is where the Bine tree differs from the binomial one: the two have the same cost in this model (Sec.~\ref{sec:bg-bine}), so the comparison above holds for both, and Bine only changes how much of the traffic crosses the slow links.
+
+The $s\,n\beta$ term is however a property of the binomial tree, whose root has $s$ children, and not of tree-based algorithms in general: the next subsection shows that trees with a bounded number of children recover the bandwidth term of the ring, while keeping a logarithmic latency term.
+
+%------------------------------------------------------------------------------
+\subsection{Pipelined trees and the double binary tree}\label{sec:bg-double-tree}
+
+The binomial tree has few steps but, as shown above, every edge carries the whole vector and the root has $s$ children.
+The tree used by \nccl{} for the allreduce~\cite{hu2025demystifying} is built differently: it limits the number of children of each rank, pipelines the vector along the tree, and uses two trees at the same time to balance the load.
+In the following, $p$ is the number of ranks, $k$ the number of chunks of the vector, and $d$ the depth of the trees.
+
+\paragraph{Pipelined trees.}
+As in the ring (Eq.~\eqref{eq:bg-ring-bcast}), the vector is split in $k$ chunks of $n/k$ bytes that follow each other along the tree, so that different levels of the tree work on different chunks at the same time.
+If a rank has $c$ children, it must send each chunk $c$ times, and since a rank sends at most one message per step, a new chunk can enter the tree only every $c$ steps.
+In the broadcast of a binomial tree the root has $c=s$ children, so the time is about $s\,k\,(\alpha+\tfrac{n}{k}\beta)$ and the bandwidth term remains $s\,n\beta$ however large $k$ is.
+With a \emph{binary} tree $c\le2$, and the cost of the broadcast is about
+\begin{equation}
+  T^{\text{single}}_{\text{broadcast}} \approx 2\,(k+d)\Bigl(\alpha+\tfrac{n}{k}\beta\Bigr),
+  \label{eq:bg-single-binary}
+\end{equation}
+that is, $2(k+d)$ steps of $n/k$ bytes: $d$ steps to fill the pipeline and then one chunk every $2$ steps.
+For $k\gg d$ the bandwidth term tends to $2\,n\beta$ independently of $p$, but it is twice the one of the ring.
+The reason is that the leaves of the tree never send in a broadcast, so half of the ranks do not use their outgoing bandwidth, while the internal ranks send every byte twice.
+
+\paragraph{Double binary tree.}
+The idea of~\cite{sanders2009twotree} is to use two binary trees on the same ranks, chosen so that the roles are complementary: no rank is an internal node of both trees, and at most one rank is a leaf in both.
+Following~\cite{hu2025demystifying}, the second tree is obtained from the first by mirroring the rank identifiers when the number of ranks is even and by shifting them by one position when it is odd.
+The vector is split in two halves, and each tree broadcasts (or reduces) one of them.
+Figure~\ref{fig:bg-double-tree} shows an example with $p=8$.
+\begin{figure}[t]
+  \centering
+  \tikzset{
+    dn/.style={circle,draw,minimum size=6.5mm,inner sep=0pt,font=\small},
+    dint/.style={dn,fill=blue!15},
+    dedge/.style={-{Stealth[length=2mm]},thick},
+  }
+  \begin{subfigure}[t]{0.48\linewidth}
+    \centering
+    \begin{tikzpicture}[x=1cm,y=1cm]
+      \node[dint] (a0) at (1.8,3) {0};
+      \node[dint] (a4) at (1.8,2) {4};
+      \node[dint] (a2) at (0.6,1) {2};
+      \node[dint] (a6) at (3.0,1) {6};
+      \node[dn] (a1) at (0,0) {1};
+      \node[dn] (a3) at (1.2,0) {3};
+      \node[dn] (a5) at (2.4,0) {5};
+      \node[dn] (a7) at (3.6,0) {7};
+      \foreach \u/\v in {a0/a4,a4/a2,a4/a6,a2/a1,a2/a3,a6/a5,a6/a7}
+        \draw[dedge] (\u) -- (\v);
+    \end{tikzpicture}
+    \caption{First tree.}
+  \end{subfigure}\hfill
+  \begin{subfigure}[t]{0.48\linewidth}
+    \centering
+    \begin{tikzpicture}[x=1cm,y=1cm]
+      \node[dint] (b7) at (1.8,3) {7};
+      \node[dint] (b3) at (1.8,2) {3};
+      \node[dint] (b1) at (0.6,1) {1};
+      \node[dint] (b5) at (3.0,1) {5};
+      \node[dn] (b0) at (0,0) {0};
+      \node[dn] (b2) at (1.2,0) {2};
+      \node[dn] (b4) at (2.4,0) {4};
+      \node[dn] (b6) at (3.6,0) {6};
+      \foreach \u/\v in {b7/b3,b3/b1,b3/b5,b1/b0,b1/b2,b5/b4,b5/b6}
+        \draw[dedge] (\u) -- (\v);
+    \end{tikzpicture}
+    \caption{Second tree (mirror of the first).}
+  \end{subfigure}
+  \caption{Example of double binary tree over $p=8$ ranks. Arrows are the edges of a broadcast; shaded ranks are internal nodes (the root included), white ranks are leaves. The ranks $\{0,2,4,6\}$ are internal in the first tree and leaves in the second, and the opposite holds for $\{1,3,5,7\}$. The first tree connects ranks at logical distance $4$, $2$ and $1$, with $1$, $2$ and $4$ edges respectively. The numbering is illustrative: the trees of \nccl{} are built across nodes (Sec.~\ref{sec:nccl-tree}).}
+  \label{fig:bg-double-tree}
+\end{figure}
+Every rank is internal in one tree and a leaf in the other, so in a broadcast, in each round, it receives one chunk of $n/2k$ bytes from the parent in each tree, and sends the chunk it received in the tree in which it is internal to its two children.
+Over the two trees it therefore receives $n$ and sends $n$ bytes, as every rank does, and the load on the incoming and outgoing links is the same for all ranks.
+A round is made of $2$ steps (two sends), each with $n/2k$ bytes, and the cost of the broadcast becomes
+\begin{equation}
+  T^{\text{double}}_{\text{broadcast}} \approx (k+d)\Bigl(2\alpha+\tfrac{n}{k}\beta\Bigr)
+  = 2(k+d)\,\alpha+\Bigl(1+\tfrac{d}{k}\Bigr)n\beta .
+  \label{eq:bg-double-bcast}
+\end{equation}
+The bandwidth term is now $n\beta$ for $k\gg d$, as in the ring and as required by the lower bound, since every rank must receive $n$ bytes, while the latency is $\bigO{k+d}$ with $d=\bigO{\log p}$ and not $\bigO{p}$.
+Minimizing over $k$ gives $k^\ast=\sqrt{d\,n\beta/(2\alpha)}$ and
+\begin{equation}
+  T^{\text{double},\ast}_{\text{broadcast}}\approx 2d\,\alpha+n\beta+2\sqrt{2\,d\,\alpha\,n\beta},
+\end{equation}
+to be compared with Eq.~\eqref{eq:bg-ring-opt}, where the term $(p-2)\alpha$ is replaced by $2d\alpha$.
+The first tree of Fig.~\ref{fig:bg-double-tree} has the same profile of distances as the distance-halving binomial tree (one edge at distance $4$, two at distance $2$ and four at distance $1$), so the long edges are used by few ranks.
+
+\paragraph{Reduce and allreduce.}
+The reduce uses the same trees with the edges reversed: an internal rank receives a chunk from each of its two children, combines them with its own, and sends the result to its parent.
+In a round it receives and sends two chunks of $n/2k$ bytes and reduces $n/k$ bytes, so
+\begin{equation}
+  T^{\text{double}}_{\text{reduce}} \approx (k+d)\Bigl(2\alpha+\tfrac{n}{k}(\beta+\gamma)\Bigr).
+\end{equation}
+The allreduce is a reduce followed by a broadcast, and if the two phases are not overlapped its cost is the sum of the two,
+\begin{equation}
+  T^{\text{double}}_{\text{allreduce}} \approx 4(k+d)\,\alpha+\Bigl(1+\tfrac{d}{k}\Bigr)n\,(2\beta+\gamma),
+  \label{eq:bg-double-allreduce}
+\end{equation}
+which is minimized by $k^\ast=\sqrt{d\,n(2\beta+\gamma)/(4\alpha)}$, giving $4d\alpha+n(2\beta+\gamma)+4\sqrt{\alpha\,d\,n(2\beta+\gamma)}$.
+For $k\gg d$ the bandwidth and reduction terms, $2n\beta$ and $n\gamma$, are those of the ring and of the butterfly (Eq.~\eqref{eq:bg-butterfly-allreduce}), i.e., optimal, whereas the latency term is logarithmic in $p$ but with the pipeline depth $k$ added to it.
+Table~\ref{tab:bg-allreduce-cost} summarizes the allreduce algorithms of this chapter.
+The phases of the reduce and of the broadcast use different directions of the links, so they can be executed concurrently on different chunks; this is what \nccl{} does (Sec.~\ref{sec:nccl-tree}) and the sum above is therefore an upper bound.
+\begin{table}[t]
+\centering
+\small
+\caption{Allreduce in the model of Sec.~\ref{sec:bg-collectives} ($p=2^s$). The binomial tree is a reduce followed by a broadcast without pipelining; the double binary tree is pipelined with $k$ chunks and has depth $d$ (Eq.~\eqref{eq:bg-double-allreduce}, phases not overlapped). The butterfly is a reduce-scatter followed by an allgather.}
+\label{tab:bg-allreduce-cost}
+\begin{tabular}{@{}lccc@{}}
+\toprule
+Algorithm & Latency & Bandwidth & Reduction \\
+\midrule
+Ring            & $2(p-1)\,\alpha$ & $2\tfrac{p-1}{p}\,n\beta$ & $\tfrac{p-1}{p}\,n\gamma$ \\
+Binomial tree   & $2s\,\alpha$     & $2s\,n\beta$              & $s\,n\gamma$ \\
+Double binary tree & $4(k+d)\,\alpha$ & $2(1+\tfrac{d}{k})\,n\beta$ & $(1+\tfrac{d}{k})\,n\gamma$ \\
+Butterfly       & $2s\,\alpha$     & $2\tfrac{p-1}{p}\,n\beta$ & $\tfrac{p-1}{p}\,n\gamma$ \\
+\bottomrule
+\end{tabular}
+\end{table}
+Compared with the butterfly, the double tree has the same asymptotic terms for large vectors but pays the $4k\alpha$ of the pipeline, so it is not the best choice for small vectors, where $k=1$ and its cost is that of a non-pipelined tree with $d$ levels and two children per rank.
+Its advantage is structural: in every step each edge of a tree carries the same amount of data, $n/2k$ bytes per chunk, from the first step to the last, whereas in the butterfly the size of the messages changes at every step.
+This difference is the reason why the double tree maps naturally on the channels of \nccl{}, while the butterfly does not (Chapters~\ref{ch:butterfly} and~\ref{ch:treeallreduce}).
 
 %------------------------------------------------------------------------------
 \subsection{Butterfly}\label{sec:bg-butterfly}

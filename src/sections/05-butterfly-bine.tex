@@ -249,8 +249,14 @@ Pos mode is selected when
   n_c>1,\qquad p\ge n_c,\qquad \texttt{count}\cdot\texttt{sizeof}(T)<n_c\cdot S,
   \label{eq:bfly-pos}
 \end{equation}
-where $S$ is a threshold (\texttt{BINE\_POS\_SLICE\_BYTES}, 16\,KiB by default).
+where $S$ is a threshold (\texttt{BINE\_POS\_SLICE\_BYTES}).
+In other words, a block is partitioned by position only when its slice per channel, $\texttt{count}\cdot\texttt{sizeof}(T)/n_c$, would be smaller than $S$, and the block size at which the partition changes is $n_c S$.
 The condition depends only on values equal on all ranks and channels.
+
+The value of $S$ was determined experimentally: we swept it and measured, for each value, the latency of the strategies in both partitions.
+The two partitions cross at about $S=16\,\text{KiB}$ per channel, which is the default value.
+$S$ is a compile-time parameter: \texttt{BINE\_POS\_SLICE\_BYTES} is defined with this default only if it is not already defined, so it can be changed at build time (e.g., with \texttt{-DBINE\_POS\_SLICE\_BYTES=}$\langle\text{bytes}\rangle$) without touching the source, and the crossover can differ on other systems.
+Below it pos mode wins, since a contiguous run needs fewer calls than the strided pieces of slice mode (\cref{sec:bfly-res-modes}); above it the idle channels of pos mode cost more than the calls it saves, so slice mode wins.
 
 \begin{figure}[t]
 \centering
@@ -639,4 +645,215 @@ The oracles are of different strength.
 %==============================================================================
 \section{Experimental results}\label{sec:bfly-results}
 
-\todo{Experimental results.}
+% Two stacked panels (allgather above, reduce-scatter below) at a fixed pixel scale,
+% so that all plots of this section are printed with the same text size.
+% \bflypair{allgather file}{reduce-scatter file}{width as a fraction of \linewidth}
+\newcommand{\bflypair}[3]{%
+  \centering
+  \captionsetup[subfigure]{skip=2pt, font=small}%
+  \begin{subfigure}[t]{\linewidth}
+    \centering
+    \includegraphics[width=#3\linewidth]{#1}
+    \caption{Allgather.}
+  \end{subfigure}\par\vspace{6pt}
+  \begin{subfigure}[t]{\linewidth}
+    \centering
+    \includegraphics[width=#3\linewidth]{#2}
+    \caption{Reduce-scatter.}
+  \end{subfigure}}
+
+This section compares the \bine{} butterfly allgather and reduce-scatter of \cref{sec:bfly-collectives} with the native \nccl{} ring (\cref{ch:nccl}), under the \texttt{SIMPLE} and \texttt{LL} protocols.
+We first compare \bine{}, with its best strategy at each point, with the ring (\cref{sec:bfly-res-ring}), and then the four strategies with one another (\cref{sec:bfly-res-modes}).
+
+\paragraph{Setup.}
+Experiments run on the Leonardo supercomputer~\cite{cineca2024leonardo}, on nodes with four NVIDIA A100 GPUs connected by NVLink, with $p\in\{4,8,16,32,64\}$ ranks (one to 16 nodes, one rank per GPU) and block sizes from 1\,kB to 64\,MB (the block contributed by each rank in the allgather and obtained by each rank in the reduce-scatter, as in \cref{ch:tree}).
+Each run has $10$ warmup and $40$ measured iterations, and each point is the median latency of the measured iterations, as in \cref{ch:treeallreduce}.
+The variability across iterations is large for small messages (the median relative standard deviation is about $30\,\%$ at 1\,kB, $10\,\%$ at 256\,kB and $2\,\%$ at 64\,MB), so differences of a few percent at small and medium sizes are not significant.
+Since a node holds four GPUs, $p=4$ is entirely intra-node.
+\texttt{LL128} is not measured, for the reasons of \cref{sec:tree-results}.
+
+%------------------------------------------------------------------------------
+\subsection{\bine{} versus ring}\label{sec:bfly-res-ring}
+
+\Cref{fig:bfly-scaling} shows the scaling with $p$ of the ring and of the best \bine{} strategy, \cref{fig:bfly-heatmap-simple,fig:bfly-heatmap-best} the fastest algorithm at each point (with \texttt{SIMPLE} only, and with the best protocol of each algorithm), and \cref{tab:bfly-best} the ratio between the ring and \bine{}, each with its best protocol.
+The two collectives behave in the same way.
+
+\begin{figure}[!tbp]
+  \bflypair{AllGather_SIMPLE+LL_vs_ranks_by_size_bv-BUTTERFLY_bm-best.png}{ReduceScatter_SIMPLE+LL_vs_ranks_by_size_bv-BUTTERFLY_bm-best.png}{0.92}
+  \caption{Median latency versus number of ranks, \bine{} butterfly with its best strategy (blue) against the \nccl{} ring (red), for six block sizes. Solid lines with filled markers: \texttt{SIMPLE}; dashed lines with hollow markers: \texttt{LL}. Both axes are logarithmic.}
+  \label{fig:bfly-scaling}
+\end{figure}
+
+In this implementation \bine{} wins only for small messages on many ranks.
+With \texttt{SIMPLE} on both sides it is faster than the ring in $8$ of the $30$ points of the allgather and $7$ of the reduce-scatter (1 and 16\,kB from $16$ and $8$ ranks respectively, plus 256\,kB on $64$ ranks in the allgather; \cref{fig:bfly-heatmap-simple}), but once the ring may use \texttt{LL} it is the fastest in only $3$ of the $60$ points (\cref{fig:bfly-heatmap-best}): at 1\,kB and $p=64$ it is $1.17\times$ (allgather) and $1.9\times$ (reduce-scatter) faster than the best ring, and $2.9$--$3.1\times$ faster than the ring with \texttt{SIMPLE}.
+
+\begin{figure}[!tbp]
+  \bflypair{AllGather_SIMPLE_best_algo_heatmap_bv-BUTTERFLY_bm-best.png}{ReduceScatter_SIMPLE_best_algo_heatmap_bv-BUTTERFLY_bm-best.png}{0.73}
+  \caption{Fastest algorithm for each block size and number of ranks with the \texttt{SIMPLE} protocol (median latency). Each cell lists the other combinations with the percentage by which they are slower. Bf-S: \bine{} butterfly with its best strategy, R-S: \nccl{} ring.}
+  \label{fig:bfly-heatmap-simple}
+\end{figure}
+
+\begin{table}[!tbp]
+\centering
+\small
+\setlength{\tabcolsep}{4pt}
+\renewcommand{\arraystretch}{1.1}
+\sisetup{table-format=1.2, detect-weight=true, mode=text}
+\caption{Median latency of the ring divided by that of the best \bine{} strategy, each with its best protocol, for the allgather and the reduce-scatter, with $p$ ranks. A value below $1$ means that the ring is faster; values above $1$ are in bold.}
+\label{tab:bfly-best}
+\begin{tabular}{@{}l *{5}{S} @{\hspace{2em}} *{5}{S}@{}}
+\toprule
+ & \multicolumn{5}{c}{Allgather} & \multicolumn{5}{c}{Reduce-scatter} \\
+\cmidrule(lr){2-6}\cmidrule(l){7-11}
+Block size & {$p{=}4$} & {8} & {16} & {32} & {64} & {$p{=}4$} & {8} & {16} & {32} & {64} \\
+\midrule
+1\,kB & 0.62 & 0.67 & 0.74 & 0.90 & {\bfseries 1.17} & 0.64 & 0.66 & 0.73 & 0.98 & {\bfseries 1.90} \\
+16\,kB & 0.70 & 0.52 & 0.49 & 0.50 & 0.64 & 0.63 & 0.59 & 0.53 & 0.48 & 0.59 \\
+256\,kB & 0.60 & 0.89 & 0.93 & 0.94 & {\bfseries 1.01} & 0.63 & 0.89 & 0.90 & 0.94 & 0.98 \\
+1\,MB & 0.68 & 0.75 & 0.72 & 0.69 & 0.68 & 0.65 & 0.65 & 0.64 & 0.65 & 0.64 \\
+4\,MB & 0.57 & 0.64 & 0.67 & 0.64 & 0.63 & 0.53 & 0.65 & 0.63 & 0.60 & 0.65 \\
+64\,MB & 0.44 & 0.75 & 0.65 & 0.61 & 0.56 & 0.43 & 0.72 & 0.63 & 0.65 & 0.63 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{figure}[!tbp]
+  \bflypair{AllGather_SIMPLE+LL_best_algo_heatmap_bv-BUTTERFLY_bm-best.png}{ReduceScatter_SIMPLE+LL_best_algo_heatmap_bv-BUTTERFLY_bm-best.png}{0.95}
+  \caption{As \cref{fig:bfly-heatmap-simple}, with both protocols. The suffixes S and LL are the protocols.}
+  \label{fig:bfly-heatmap-best}
+\end{figure}
+
+The reason is the one of \cref{sec:bg-ring-vs-tree} (solid lines of \cref{fig:bfly-scaling}): at 1\,kB the ring time doubles at every doubling of $p$ ($36$ to $556$\,\textmu s in the allgather from $4$ to $64$ ranks, with \texttt{SIMPLE}), while the \bine{} time grows by a constant $31$--$42$\,\textmu s ($48$ to $191$\,\textmu s).
+The other point is the allgather at 256\,kB on $64$ ranks, where the two are on par (within $11\,\%$ for $p\ge8$ at this size).
+At 16\,kB the ring with \texttt{LL} is $1.4$--$2.0\times$ faster at every scale.
+From 1\,MB on the ring is faster by $1.3$--$1.8\times$ with \texttt{SIMPLE}, and the gap does not depend on $p$.
+Both algorithms have the same bandwidth term, $\tfrac{p-1}{p}n\beta$ (\cref{tab:bg-cost}), so the difference is not in the volume of data but in how efficiently it is moved.
+The main cause is the cost of a call (\cref{sec:nccl-fifo-cost}): every call consumes the FIFO steps of a full chunk, whatever the number of elements it moves.
+The ring moves full chunks through the fused \texttt{directRecvCopyDirectSend} (\cref{sec:nccl-primitives}), so every step of the FIFO is used.
+In slice mode, which \cref{eq:bfly-pos} selects for blocks of $n_cS$ bytes or more, the butterfly moves a window as one strided piece per block (\cref{sec:bfly-res-modes}), and each piece is a call that occupies a whole step even when it is much smaller than a chunk, so most of the steps are mostly empty (\cref{fig:bfly-slots}).
+The butterfly also has a barrier between the steps (\cref{sec:bfly-kernels}).
+We have not profiled the kernels, so the weight of each factor is not measured, but the first one is the one that the design predicts to matter most.
+
+The dashed lines of \cref{fig:bfly-scaling} show that \texttt{LL} is much worse for \bine{} than for the ring, as for the tree (\cref{sec:tree-ll}); this is consistent with the cost of a call above, since the chunk of \texttt{LL} is much smaller than that of \texttt{SIMPLE} (\cref{fig:nccl-grain}), so a block needs more calls and each of them still costs a full step.
+From 256\,kB on and $p\ge16$ \bine{} with \texttt{LL} is $6$--$29\times$ slower than the ring with \texttt{LL}; at 64\,MB and $p\ge8$ \texttt{LL} is $11.5$--$13.4\times$ slower than \texttt{SIMPLE} for \bine{}, against $2.6$--$3.5\times$ for the ring.
+As a consequence, \bine{} switches to \texttt{SIMPLE} at much smaller sizes (between 1 and 16\,kB for $p\ge32$, against between 16\,kB and 256\,kB for the ring).
+
+%------------------------------------------------------------------------------
+\FloatBarrier
+\subsection{The four strategies}\label{sec:bfly-res-modes}
+
+The strategies of \cref{sec:bfly-strategies} differ in where the blocks are placed, but their performance also depends on how the transfers are issued, which is decided by the work partition (\cref{sec:bfly-pos}) and by the cost of a call (\cref{sec:nccl-fifo-cost}).
+
+\paragraph{Slice mode.}
+Every channel handles a slice of every block, so a window of $g$ blocks is $g$ strided pieces, and each piece needs its own call (\cref{sec:bfly-fast}).
+A call consumes the steps of a full chunk even when it moves much less, so a piece smaller than a chunk wastes most of its step, and a window is sent in $g$ steps instead of the few that a contiguous run of the same size would need (\cref{fig:bfly-slots}).
+This is what block-by-block always does, and it is what the other strategies fall back to in slice mode.
+
+\paragraph{Pos mode.}
+A channel owns whole blocks, so send and double send move a window as a contiguous run, with full chunks.
+The price is that a window is owned by few channels: with $n_c$ channels each one owns $p/n_c$ consecutive positions, and the window of $2^k$ positions of step $k$ intersects only $\lceil 2^k n_c/p\rceil$ of them, the others are idle for that step (\cref{fig:bfly-posuse}).
+For small blocks this does not matter, since the time is determined by the latency, and pos mode is selected only there, below the crossover $n_cS$ of \cref{eq:bfly-pos}; for large blocks a window would be moved by a few channels only, and the partition would limit the bandwidth.
+Permute cannot use pos mode at all.
+
+The expectation is then that send and double send are much faster than block-by-block where pos mode applies, and that in slice mode they degrade to the calls of block-by-block while keeping their own extra cost: the exchange for send, the permutation for permute.
+\Cref{fig:bfly-modes} and \cref{tab:bfly-modes} are in agreement with this.
+The partition is the one given by \cref{eq:bfly-pos}: pos mode below $n_cS$ bytes per block, with the default $S=16\,\text{KiB}$, the crossover found experimentally, and slice mode above.
+Since $n_c$ was not recorded in the runs, the exact block size of the switch at each point is not known; it lies between 16 and 256\,kB.
+% TODO: log the number of channels actually used at each point.
+
+\begin{figure}[!tbp]
+\centering
+\begin{tikzpicture}[x=1cm, y=1cm, font=\footnotesize,
+    slot/.style={draw, minimum height=0.7cm, anchor=south west, inner sep=0, fill=gray!12},
+    pc/.style={draw, minimum height=0.7cm, anchor=south west, inner sep=0}]
+  \def\w{2.0}% width of a slot = one chunk
+  % (a) contiguous run: 4 pieces of 0.4 chunk = 1.6 chunks -> 2 steps
+  \node[anchor=west, font=\footnotesize\bfseries] at (0,1.9) {(a) contiguous run (pos mode)};
+  \foreach \k in {0,1} {
+    \node[slot, minimum width=\w cm] at (2.3*\k,0.9) {};
+  }
+  \node[pc, fill=ch0!40, minimum width=0.8cm] at (0,0.9) {};
+  \node[pc, fill=ch1!40, minimum width=0.8cm] at (0.8,0.9) {};
+  \node[pc, fill=ch2!40, minimum width=0.4cm] at (1.6,0.9) {};
+  \node[pc, fill=ch2!40, minimum width=0.4cm] at (2.3,0.9) {};
+  \node[pc, fill=chunkB!60, minimum width=0.8cm] at (2.7,0.9) {};
+  \node[anchor=west] at (5.0,1.25) {2 steps for 4 pieces: only the last one is partly empty};
+  % (b) strided pieces: 4 calls, 4 steps
+  \node[anchor=west, font=\footnotesize\bfseries] at (0,-0.3) {(b) strided pieces (slice mode)};
+  \foreach \k/\c in {0/ch0,1/ch1,2/ch2,3/chunkB} {
+    \node[slot, minimum width=\w cm] at (2.3*\k,-1.3) {};
+    \node[pc, fill=\c!40, minimum width=0.8cm] at (2.3*\k,-1.3) {};
+  }
+  \node[anchor=west] at (9.4,-0.95) {4 steps for 4 pieces,};
+  \node[anchor=west] at (9.4,-1.45) {each $60\,\%$ empty};
+  % legend
+  \node[slot, minimum width=0.5cm] at (0,-2.5) {};
+  \node[anchor=west] at (0.6,-2.15) {FIFO step (one chunk)};
+  \node[pc, fill=ch0!40, minimum width=0.5cm] at (4.2,-2.5) {};
+  \node[anchor=west] at (4.8,-2.15) {piece of a block ($0.4$ of a chunk)};
+\end{tikzpicture}
+\caption{Cost of a call. A call occupies the FIFO steps of a whole chunk, whatever it moves. A window of four blocks whose pieces are $0.4$ of a chunk each is sent in two steps if the pieces are adjacent (a), and in four mostly empty steps if each piece is a separate call (b).}
+\label{fig:bfly-slots}
+\end{figure}
+
+\begin{figure}[!tbp]
+\centering
+\begin{tikzpicture}[x=1.05cm, y=0.95cm, font=\footnotesize,
+    cell/.style={draw, minimum width=1cm, minimum height=0.8cm, inner sep=0pt}]
+  \foreach \row/\n/\act in {0/1/1,1/2/1,2/4/2} {
+    \foreach \y/\c in {0/0,1/0,2/1,3/1,4/2,5/2,6/3,7/3} {
+      \ifnum\y<\n \edef\fc{pch\c}\def\dc{black}\else\def\fc{white}\def\dc{gray!50}\fi
+      \node[cell, fill=\fc, draw=\dc] at (\y,-\row) {};
+    }
+    \node[anchor=west] at (7.7,-\row) {$\act$ of $4$ channels};
+    \node[anchor=east] at (-0.7,-\row) {step $k{=}\row$};
+  }
+  \foreach \y in {0,...,7} \node[above] at (\y,0.4) {\y};
+  \foreach \c in {0,...,3} {
+    \fill[pch\c] (2*\c-0.5,1.35) rectangle ++(0.3,0.3);
+    \node[anchor=west] at (2*\c-0.15,1.5) {channel \c};
+  }
+\end{tikzpicture}
+\caption{Use of the channels in pos mode, allgather with $p=8$ and four channels, for the rank of position $0$. Each channel owns two positions; the window sent at step $k$ (colored) has $2^k$ positions and involves only the channels that own part of it. In the reduce-scatter the steps are in the opposite order.}
+\label{fig:bfly-posuse}
+\end{figure}
+
+\begin{figure}[!tbp]
+  \bflypair{AllGather_SIMPLE+LL_best_algo_heatmap_BINE_bv-BUTTERFLY.png}{ReduceScatter_SIMPLE+LL_best_algo_heatmap_BINE_bv-BUTTERFLY.png}{0.95}
+  \caption{Fastest \bine{} strategy and protocol for each block size and number of ranks (median latency), without the ring. Each cell lists the other combinations with the percentage by which they are slower. B, S, P, D: block-by-block, send, permute and double send; the suffixes S and LL are the protocols.}
+  \label{fig:bfly-modes}
+\end{figure}
+
+\begin{table}[!tbp]
+\centering
+\small
+\setlength{\tabcolsep}{4pt}
+\renewcommand{\arraystretch}{1.1}
+\sisetup{table-format=1.2, detect-weight=true, mode=text}
+\caption{Latency of send, double send and permute relative to block-by-block, with \texttt{SIMPLE} on $64$ ranks (a value below $1$ means faster than block-by-block).}
+\label{tab:bfly-modes}
+\begin{tabular}{@{}l *{3}{S} @{\hspace{2em}} *{3}{S}@{}}
+\toprule
+ & \multicolumn{3}{c}{Allgather} & \multicolumn{3}{c}{Reduce-scatter} \\
+\cmidrule(lr){2-4}\cmidrule(l){5-7}
+Block size & {send} & {double} & {permute} & {send} & {double} & {permute} \\
+\midrule
+1\,kB & 0.31 & 0.32 & 0.83 & 0.10 & 0.08 & 0.20 \\
+16\,kB & 0.95 & 1.15 & 2.43 & 0.62 & 0.75 & 1.41 \\
+256\,kB & 1.09 & 1.93 & 3.38 & 1.04 & 2.34 & 1.79 \\
+1\,MB & 1.05 & 2.11 & 4.58 & 0.99 & 2.32 & 1.95 \\
+4\,MB & 1.09 & 2.61 & 4.99 & 1.07 & 2.50 & 2.00 \\
+64\,MB & 1.03 & 2.41 & 4.95 & 1.06 & 2.33 & 2.02 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+At 1\,kB block-by-block pays one call per block, and is $3\times$ slower than send and double send in the allgather ($609$ against $191$ and $194$\,\textmu s) and even more in the reduce-scatter ($2227$ against $218$ and $184$\,\textmu s; the block-by-block point is irregular, since on $32$ ranks it takes $213$\,\textmu s).
+This is the benefit of pos mode, and it disappears between 16 and 256\,kB, where the switch to slice mode takes place ($n_cS$, \cref{eq:bfly-pos}).
+From 256\,kB on send is at most $9\,\%$ slower than block-by-block, i.e., it has the same transfers plus its exchange, whose cost shrinks as $p$ grows (at 64\,MB, $1.2$--$1.3\times$ on $4$ and $8$ ranks and $1.03$--$1.06\times$ on $64$) because it moves one block against the $p-1$ of the butterfly.
+Permute adds the in-place permutation of the whole buffer, so on $64$ ranks it is $4.6$--$5\times$ slower than block-by-block in the allgather and $2\times$ in the reduce-scatter from 1\,MB on, and it is the best strategy only at 1\,kB on $16$ ranks or fewer, by at most $12\,\%$.
+Double send degrades more than the others: from 256\,kB on it is $1.9$--$2.6\times$ slower than block-by-block, although in slice mode it issues the same transfers, and with \texttt{LL} it is up to $15\times$ slower.
+We have not identified the cause, and a profile of this strategy is needed.
+% TODO: profile double send (per-step times, per-channel traffic).
+
+In summary, only the pos mode makes the strategies other than block-by-block useful, and only for small blocks: the best \bine{} strategy is send for 1--16\,kB on many ranks, block-by-block from 16\,kB on (within $2\,\%$ of the best from 256\,kB on, with \texttt{SIMPLE}), and permute and double send are never worth their extra cost.

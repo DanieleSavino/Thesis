@@ -474,7 +474,7 @@ The native \pat{} exists only for \texttt{SIMPLE}, so the comparison is with \te
 The butterfly kernels of \cref{ch:butterfly} were not run in this configuration.
 Since the system is not the same, the absolute times are not comparable with those of the previous sections.
 
-\Cref{fig:pat-native-scaling} shows the latency of the three algorithms, \bine{}-\pat{} with its best strategy, and \cref{tab:pat-native} the ratios to the native \pat{}.
+\Cref{fig:pat-native-scaling} shows the latency of the three algorithms, \bine{}-\pat{} with its best strategy, and \cref{fig:pat-native-heatmap} the fastest of them at each point, with the percentage by which the others are slower.
 
 \begin{figure}[!tbp]
   \centering
@@ -483,29 +483,12 @@ Since the system is not the same, the absolute times are not comparable with tho
   \label{fig:pat-native-scaling}
 \end{figure}
 
-\begin{table}[htbp]
-\centering
-\small
-\setlength{\tabcolsep}{4pt}
-\renewcommand{\arraystretch}{1.1}
-\sisetup{table-format=1.2, detect-weight=true, mode=text}
-\caption{Allgather with one rank per node (MeluXina): median latency of \bine{}-\pat{} with its best strategy, and of the ring with \texttt{SIMPLE} and with \texttt{LL}, divided by that of the native \pat{} (\texttt{SIMPLE}). A value below $1$ means faster than the native \pat{}; these values are in bold.}
-\label{tab:pat-native}
-\begin{tabular}{@{}l *{3}{S} @{\hspace{1.5em}} *{3}{S} @{\hspace{1.5em}} *{3}{S}@{}}
-\toprule
- & \multicolumn{3}{c}{\bine{}-\pat{}} & \multicolumn{3}{c}{Ring, \texttt{SIMPLE}} & \multicolumn{3}{c}{Ring, \texttt{LL}} \\
-\cmidrule(lr){2-4}\cmidrule(lr){5-7}\cmidrule(l){8-10}
-Block size & {$p{=}4$} & {8} & {16} & {$p{=}4$} & {8} & {16} & {$p{=}4$} & {8} & {16} \\
-\midrule
-1\,kB   & 1.23 & 1.29 & 1.47 & 1.26 & 1.65 & 2.27 & {\bfseries 0.63} & {\bfseries 0.75} & 1.11 \\
-16\,kB  & 1.17 & 1.21 & 1.14 & 1.33 & 1.77 & 1.97 & {\bfseries 0.86} & 1.47 & 1.72 \\
-256\,kB & 1.12 & 1.07 & 1.00 & 1.12 & 1.10 & 1.02 & 1.85 & 2.06 & 1.92 \\
-1\,MB   & 1.03 & {\bfseries 0.97} & {\bfseries 0.92} & {\bfseries 0.99} & {\bfseries 0.93} & {\bfseries 0.96} & 2.07 & 2.13 & 2.06 \\
-4\,MB   & 1.01 & 1.01 & {\bfseries 0.95} & 1.05 & 1.00 & {\bfseries 0.93} & 2.30 & 2.29 & 2.17 \\
-64\,MB  & {\bfseries 0.97} & 1.01 & {\bfseries 0.93} & 1.01 & {\bfseries 0.98} & {\bfseries 0.94} & 2.18 & 2.40 & 2.13 \\
-\bottomrule
-\end{tabular}
-\end{table}
+\begin{figure}[!tbp]
+  \centering
+  \includegraphics[width=\linewidth]{AllGather_SIMPLE+LL_best_algo_heatmap_PAT-1ppn.png}
+  \caption{Allgather with one rank per node (MeluXina): fastest algorithm and protocol for each block size and number of ranks (median latency), \bine{}-\pat{} with its best strategy. Each cell lists the other combinations with the percentage by which they are slower. Pa-S: \bine{}-\pat{}, P-S: native \pat{}, R-S and R-LL: \nccl{} ring with \texttt{SIMPLE} and with \texttt{LL}.}
+  \label{fig:pat-native-heatmap}
+\end{figure}
 
 \paragraph{Small blocks.}
 Up to 16\,kB the native \pat{} is the fastest algorithm with \texttt{SIMPLE}, and \bine{}-\pat{} is $1.14$--$1.47\times$ slower.

@@ -240,7 +240,7 @@ Running the benchmark as a separate process keeps every test in a fresh \nccl{} 
 \paragraph{Scaling with \texttt{nccl-tests}.}
 The \texttt{nccltests} subcommand runs the same sweep with NVIDIA's \texttt{nccl-tests} instead, as an independent check of \texttt{unitccl\_bench}.
 \texttt{nccl-tests} times its iterations back to back with no barrier in between and reports their mean, so it measures a pipelined throughput rather than the latency of an isolated collective; repeating each size $R$ times (\texttt{-N}) gives $R$ samples per point.
-Its sizes are converted so that both tools refer to the same per-rank buffer, and its results are written to the same CSV files.
+Its sizes are converted so that both tools refer to the same per-rank buffer, and its results are written to the same CSV files, all reported datata points come from the \texttt{nccl-tests} branch.
 
 \paragraph{Sweeps on Slurm.}
 A sweep is described by the collectives, algorithms, protocols and rank counts to measure.

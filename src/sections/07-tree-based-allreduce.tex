@@ -269,39 +269,10 @@ The algorithms are: the \nccl{} tree (\texttt{TREE}) and ring (\texttt{RING}); t
 Each run consists of $10$ warmup iterations followed by $40$ measured iterations.
 Each point is the median latency of the measured iterations.
 \paragraph{Overview.}
-\Cref{fig:tar-heatmap-simple} shows the fastest algorithm for each size and number of ranks with the \texttt{Simple} protocol, and \cref{tab:tar-speedup} the speedup of the Bine tree over the best of the \nccl{} tree and ring.
+\Cref{fig:tar-heatmap-simple} shows the fastest algorithm for each size and number of ranks with the \texttt{Simple} protocol
 \Cref{fig:tar-scaling} shows how the latency of the four algorithms grows with the number of ranks, \cref{fig:tar-heatmap} the fastest among the eight combinations of algorithm and protocol, and \cref{fig:tar-scaling-bt} the Bine tree against the \nccl{} tree and the Bine butterfly alone.
 In short, with the \texttt{Simple} protocol the Bine tree is faster than the \nccl{} tree for vectors up to $1$\,MB on almost all the scales, and for $1$\,MB it is up to $1.39\times$ faster than the best \nccl{} algorithm with the same protocol and the fastest algorithm overall from $16$ ranks on.
 For larger vectors the double binary tree and the ring of \nccl{} take over, as expected from their bandwidth-oriented design.
-\begin{table}[!htb]
-\centering
-\small
-\caption{Speedup of the Bine tree allreduce over the best of the \nccl{} tree and ring, i.e., the time of the best \nccl{} algorithm divided by the time of the Bine tree (values above $1$, in bold, mean that the Bine tree is faster). Median latency, with the \texttt{Simple} protocol (first block) and with LL (second block).}
-\label{tab:tar-speedup}
-\begin{tabular}{@{}lrrrrrr@{}}
-\toprule
- & \multicolumn{6}{c}{Ranks} \\
-\cmidrule(l){2-7}
-Size & 4 & 8 & 16 & 32 & 64 & 128 \\
-\midrule
-\multicolumn{7}{@{}l}{\emph{Simple}} \\
-1\,kB & \textbf{1.27} & \textbf{1.07} & \textbf{1.12} & \textbf{1.16} & \textbf{1.16} & \textbf{1.13} \\
-16\,kB & \textbf{1.11} & \textbf{1.02} & \textbf{1.07} & \textbf{1.08} & \textbf{1.02} & \textbf{1.03} \\
-256\,kB & \textbf{1.01} & \textbf{1.04} & \textbf{1.06} & \textbf{1.05} & \textbf{1.00} & 0.94 \\
-1\,MB & \textbf{1.08} & \textbf{1.03} & \textbf{1.39} & \textbf{1.27} & \textbf{1.31} & \textbf{1.23} \\
-4\,MB & 0.86 & 0.78 & 0.86 & \textbf{1.04} & \textbf{1.26} & \textbf{1.17} \\
-64\,MB & 0.63 & 0.70 & 0.56 & 0.47 & 0.38 & 0.44 \\
-\midrule
-\multicolumn{7}{@{}l}{\emph{LL}} \\
-1\,kB & 0.72 & 0.75 & 0.77 & 0.76 & 0.76 & 0.79 \\
-16\,kB & 0.68 & 0.75 & 0.67 & 0.63 & 0.57 & 0.53 \\
-256\,kB & 0.62 & 0.51 & 0.57 & 0.32 & 0.33 & 0.30 \\
-1\,MB & 0.58 & 0.42 & 0.31 & 0.29 & 0.25 & 0.20 \\
-4\,MB & 0.59 & 0.36 & 0.30 & 0.21 & 0.16 & 0.14 \\
-64\,MB & 0.54 & 0.31 & 0.30 & 0.26 & 0.15 & 0.12 \\
-\bottomrule
-\end{tabular}
-\end{table}
 \begin{figure}[!htb]
   \centering
   \includegraphics[width=0.66\linewidth]{AllReduce_SIMPLE_best_algo_heatmap.png}

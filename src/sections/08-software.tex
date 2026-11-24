@@ -81,18 +81,25 @@ Two Python scripts turn a trace into a picture.
 Its \emph{candle} view (\cref{fig:sw-cb-candle}) draws each rank as a horizontal lane and each exchange as a vertical connector between the two lanes, one column per pair, grouped by step, so that the pairing of a step and the distance between partners are read at a glance; the other views draw the same exchanges as a rank-by-step grid, as a ladder, or as the $p$ broadcast trees that a butterfly allgather implicitly contains, one per source block.
 These drawings are how the schedules of \cref{ch:tree,ch:butterfly} were checked visually against the figures of the algorithms before they were moved to \nccl{}.
 
-\begin{figure}[htbp]
+\begin{figure}[!tbp]
   \centering
-  \includegraphics[width=0.85\linewidth]{collbench_bcast_tree.png}
-  \caption{CollBench trace of the distance-halving \bine{} broadcast of Collalgo on $8$ ranks (four nodes with two GPUs each, CUDA-aware MPI), drawn by \texttt{tree.py}. Each edge is a send, coloured by step and labelled with the time from posting the send to its completion, which includes the time the receiver takes to reach the matching receive.}
-  \label{fig:sw-cb-tree}
-\end{figure}
+  \captionsetup[subfigure]{skip=2pt}
+  \begin{subfigure}{\linewidth}
+    \centering
+    \includegraphics[width=0.8\linewidth]{collbench_bcast_tree.png}
+    \caption{Distance-halving \bine{} broadcast, drawn by \texttt{tree.py}. Each edge is a send, labelled with the time from posting it to its completion, which includes the time the receiver takes to reach the matching receive.}
+    \label{fig:sw-cb-tree}
+  \end{subfigure}
 
-\begin{figure}[htbp]
-  \centering
-  \includegraphics[width=0.8\linewidth]{collbench_ag_candle.png}
-  \caption{CollBench trace of the block-by-block \bine{} butterfly allgather of Collalgo on $8$ ranks (same setup as \cref{fig:sw-cb-tree}), drawn by \texttt{butterfly.py} in candle mode. Each connector is the exchange between two ranks at one step, coloured by step and labelled with its duration.}
-  \label{fig:sw-cb-candle}
+  \medskip
+  \begin{subfigure}{\linewidth}
+    \centering
+    \includegraphics[width=0.62\linewidth]{collbench_ag_candle.png}
+    \caption{Block-by-block \bine{} butterfly allgather, drawn by \texttt{butterfly.py} in candle mode. Each connector is the exchange between two ranks at one step, labelled with its duration.}
+    \label{fig:sw-cb-candle}
+  \end{subfigure}
+  \caption{CollBench traces of two Collalgo collectives on $8$ ranks (four nodes with two GPUs each, CUDA-aware MPI), coloured by step.}
+  \label{fig:sw-cb}
 \end{figure}
 
 % ---------------------------------------------------------------------------

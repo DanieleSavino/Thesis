@@ -1,5 +1,13 @@
 \chapter{Bine Butterfly Algorithms}\label{ch:butterfly}
 
+% From this chapter on, float-only pages stack their floats from the top
+% instead of spreading them over the page.
+\makeatletter
+\setlength{\@fptop}{0pt}
+\setlength{\@fpsep}{20pt plus 2pt}
+\setlength{\@fpbot}{0pt plus 1fil}
+\makeatother
+
 % Channel colours used by the figures of this chapter
 \colorlet{pch0}{ch0!70}
 \colorlet{pch1}{ch1!70}
@@ -856,54 +864,74 @@ The cause of this slowdown is in the schedule, not in the kernels.
 On $4$ ranks, where all partners are on the same node and connected by NVLink, double send and block-by-block take the same time at every size ($0.98$--$1.08\times$), and from $8$ ranks on the ratio grows with $p$.
 The distance-doubling and the distance-halving schedules move windows of the same sizes, but in opposite orders of distance (\cref{sec:bfly-dhlv}).
 In the distance-doubling schedule the largest windows ($p/2$ and $p/4$ blocks, at the last steps of the allgather and the first of the reduce-scatter) go to the closest partners, in the distance-halving one to the farthest.
-With four consecutive ranks per node a close partner is often on the same node and a far one rarely, so in the first schedule the largest windows travel mostly over NVLink and in the second mostly over the network (\cref{fig:bfly-dh-internode}).
+With four consecutive ranks per node a close partner is often on the same node and a far one rarely, so in the first schedule the largest windows travel mostly over NVLink and in the second mostly over the network.
+On the uplinks that connect the nodes to the network this doubles the load: on $8$ ranks each uplink carries $6$ blocks per direction over the whole reduce-scatter (and the same in the allgather, its time reverse) with distance doubling and $12$ with distance halving (\cref{fig:bfly-dh-tree}).
+
+% \dhstep{width}{pairs a/b}{uplink load}{label}: one allgather step on 8 ranks, 2 nodes of 4
+% under a network switch; every pair of the step drawn along the links it uses.
+\newcommand{\dhstep}[4]{%
+  \begin{tikzpicture}[x=0.5cm, y=0.62cm,
+      rank/.style={circle, draw, fill=white, minimum size=0.4cm, inner sep=0pt, font=\scriptsize},
+      sw/.style={rectangle, rounded corners=1.5pt, draw=black!60, fill=black!8,
+                 minimum width=0.9cm, minimum height=0.3cm, inner sep=0pt},
+      wire/.style={draw=black!25, line width=0.6pt},
+      uplink/.style={draw=black!25, line width=1.6pt},
+      path/.style={line width=#1pt, line join=round, line cap=round},
+      load/.style={font=\scriptsize\bfseries, crosslink, inner sep=1pt, fill=white}]
+    \foreach \i in {0,...,7} \coordinate (r\i) at (\i,0);
+    \foreach \j in {0,1} \coordinate (l\j) at (4*\j+1.5,1.6);
+    \coordinate (sp) at (3.5,3.2);
+    \foreach \i in {0,...,7} {\pgfmathtruncatemacro{\j}{\i/4}\draw[wire] (r\i) -- (l\j);}
+    \foreach \j in {0,1} \draw[uplink] (l\j) -- (sp);
+    \foreach \a/\b in {#2} {
+      \pgfmathtruncatemacro{\ja}{\a/4}
+      \pgfmathtruncatemacro{\jb}{\b/4}
+      \ifnum\ja=\jb
+        \draw[path, localxfer] (r\a) -- (l\ja) -- (r\b);
+      \else
+        \draw[path, crosslink] (r\a) -- (l\ja) -- (sp) -- (l\jb) -- (r\b);
+      \fi
+    }
+    \foreach \j in {0,1} \node[sw] at (l\j) {};
+    \node[sw, minimum width=1.2cm] at (sp) {};
+    \foreach \i in {0,...,7} \node[rank] at (r\i) {\i};
+    \def\dhld{#3}\ifx\dhld\empty\else\foreach \j in {0,1} \node[load] at ($(l\j)!0.45!(sp)$) {#3};\fi
+    \node[font=\scriptsize, anchor=north] at (3.5,-0.3) {#4};
+  \end{tikzpicture}%
+}
 
 \begin{figure}[htbp]
-\centering
-\begin{tikzpicture}[x=0.8cm, y=0.8cm, font=\footnotesize,
-    rk/.style={draw, minimum width=0.62cm, minimum height=0.5cm, inner sep=0pt, fill=white},
-    stp/.style={circle, draw, fill=white, line width=0.8pt, minimum size=0.42cm, inner sep=0pt, font=\scriptsize\bfseries}]
-  % \dhpanel{y offset}{title}{list of step/partner/blocks/color}
-  % arcs to lower ranks are drawn above the row, arcs to higher ranks below it;
-  % the short arc on each side starts closer to its partner, so it nests inside the long one
-  \newcommand{\dhpanel}[3]{%
-    \begin{scope}[yshift=#1 cm]
-      \node[anchor=west, font=\footnotesize\bfseries] at (-0.5,2.55) {#2};
-      \foreach \n in {0,...,3} {
-        \draw[rounded corners=3pt, dashed, gray] (4*\n-0.45,-0.42) rectangle (4*\n+3.45,0.42);
-        \node[gray, font=\scriptsize, anchor=south west, inner sep=1pt] at (4*\n-0.45,0.42) {node \n};
-      }
-      \foreach \k/\q/\b/\c in {#3} {
-        \pgfmathsetmacro{\d}{abs(\q-6)}
-        \pgfmathsetmacro{\s}{\q<6 ? 1 : -1}
-        \pgfmathsetmacro{\h}{\s*(0.75+0.38*\d)}
-        \pgfmathsetmacro{\yo}{\s*0.27}
-        \pgfmathsetmacro{\lw}{0.45*\b}
-        \pgfmathsetmacro{\x}{6+(\q>6 ? 1 : -1)*(\d>1 ? -0.17 : 0.17)}
-        \draw[\c, line width=\lw pt] (\x,\yo) .. controls (\x,\h) and (\q,\h) .. (\q,\yo)
-          node[stp, draw=\c, text=\c, pos=0.5] {\k};
-      }
-      \foreach \i in {0,...,15} \node[rk] at (\i,0) {\i};
-      \node[rk, fill=gray!30, font=\footnotesize\bfseries] at (6,0) {6};
-    \end{scope}}
-  \dhpanel{0}{(a) Distance doubling (block-by-block, send, permute)}{0/1/1/crosslink, 1/9/2/crosslink, 2/5/4/localxfer, 3/7/8/localxfer}
-  \dhpanel{-4.7}{(b) Distance halving (double send)}{0/7/1/localxfer, 1/5/2/localxfer, 2/9/4/crosslink, 3/1/8/crosslink}
-  % legend
-  \begin{scope}[yshift=-6.8cm]
-    \draw[localxfer, line width=2pt] (0,0) -- (0.8,0); \node[anchor=west] at (0.9,0) {NVLink};
-    \draw[crosslink, line width=2pt] (2.9,0) -- (3.7,0); \node[anchor=west] at (3.8,0) {network};
-    \node[stp] at (6.5,0) {$k$}; \node[anchor=west] at (6.75,0) {allgather step; line width $\propto$ blocks sent ($2^k$)};
-  \end{scope}
-\end{tikzpicture}
-\caption{Partners of rank $6$ in the allgather on $16$ ranks, four consecutive ranks per node. Both schedules send $1$, $2$, $4$ and $8$ blocks at steps $k=0,\dots,3$, but to partners in opposite orders of distance. (a) The two largest windows go to the closest partners, on the same node: $3$ blocks over the network, $12$ over NVLink. (b) They go to the farthest partners, on other nodes: $12$ blocks over the network, $3$ over NVLink. The reduce-scatter has the same partners with the steps reversed.}
-\label{fig:bfly-dh-internode}
+  \centering
+  \captionsetup[subfigure]{skip=2pt}
+  \setlength{\tabcolsep}{4pt}
+  \begin{subfigure}{\linewidth}
+    \centering
+    \begin{tabular}{ccc}
+      \dhstep{2.1}{0/1, 2/3, 4/5, 6/7}{}{step 0: 4 blocks} &
+      \dhstep{1.3}{0/7, 1/2, 3/4, 5/6}{4}{step 1: 2 blocks} &
+      \dhstep{0.8}{0/3, 1/6, 2/5, 4/7}{2}{step 2: 1 block}
+    \end{tabular}
+    \caption{Distance doubling (block-by-block, send, permute): $0+4+2=6$ blocks per uplink.}
+  \end{subfigure}
+
+  \medskip
+  \begin{subfigure}{\linewidth}
+    \centering
+    \begin{tabular}{ccc}
+      \dhstep{2.1}{0/3, 1/6, 2/5, 4/7}{8}{step 0: 4 blocks} &
+      \dhstep{1.3}{0/7, 1/2, 3/4, 5/6}{4}{step 1: 2 blocks} &
+      \dhstep{0.8}{0/1, 2/3, 4/5, 6/7}{}{step 2: 1 block}
+    \end{tabular}
+    \caption{Distance halving (double send): $8+4+0=12$ blocks per uplink.}
+  \end{subfigure}
+  \caption{The reduce-scatter on $8$ ranks in two nodes of four, each node attached to the network switch by one uplink. Each step shows its four exchanges along the links they use: green paths stay inside a node (NVLink), red paths cross the network; line width grows with the blocks sent. The label on each uplink is the number of blocks it carries per direction in that step. The two schedules make the same exchanges in opposite orders, and distance halving pairs the farthest partners with the largest windows. The allgather is the same figure read from right to left.}
+  \label{fig:bfly-dh-tree}
 \end{figure}
 
-\Cref{tab:bfly-internode} gives the same count for every rank and $p$, from the tables $\Pi$ and $\Pi^{\mathrm{dh}}$: in the worst rank, double send moves $2$--$2.6\times$ as many blocks over the network as the other strategies, while the number of steps that cross nodes is the same.
+\Cref{tab:bfly-internode} counts the blocks that each rank sends to other nodes, for every $p$, from the tables $\Pi$ and $\Pi^{\mathrm{dh}}$: in the worst rank, double send moves $2$--$2.6\times$ as many blocks over the network as the other strategies, while the number of steps that cross nodes is the same.
 The latency of double send relative to block-by-block at 64\,MB, where the time is bandwidth-bound, follows this ratio within $10\,\%$ in both collectives, and the \pat{}-based implementation of \cref{ch:pat}, which shares only the schedule with these kernels, shows the same slowdown (\cref{sec:pat-res-modes}).
 The cost model of \cref{tab:bg-cost} does not predict this, since it treats every link as equal and ignores the hierarchy of the system.
-With \texttt{LL} the slowdown at 64\,MB is larger ($2.9$--$3.6\times$ in the allgather, $3.1$--$3.3\times$ in the reduce-scatter), and the extreme value of $14$--$15\times$ is a single point in both collectives, 256\,kB on $8$ ranks; the volume of inter-node traffic alone does not account for these values.
-
+With \texttt{LL} the slowdown at 64\,MB is larger ($2.9$--$3.6\times$ in the allgather, $3.1$--$3.3\times$ in the reduce-scatter).
 \begin{table}[htbp]
 \centering
 \small

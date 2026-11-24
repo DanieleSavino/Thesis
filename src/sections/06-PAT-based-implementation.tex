@@ -442,7 +442,7 @@ Permute pays the in-place permutation of the whole output buffer (\cref{sec:pat-
 
 \paragraph{Double send.}
 Double send is $1.9$--$2.5\times$ slower than block-by-block from 256\,kB on, as in the butterfly (\cref{sec:bfly-res-modes}).
-\Cref{sec:bfly-res-modes} attributes this to the schedule: the distance-halving schedule sends its largest windows to the farthest partners, which are on other nodes, and moves $2$--$2.6\times$ as many blocks over the network as the distance-doubling one (\cref{fig:bfly-dh-internode,tab:bfly-internode}).
+\Cref{sec:bfly-res-modes} attributes this to the schedule: the distance-halving schedule sends its largest windows to the farthest partners, which are on other nodes, and moves $2$--$2.6\times$ as many blocks over the network as the distance-doubling one (\cref{fig:bfly-dh-tree,tab:bfly-internode}).
 \bine{}-\pat{} shares only the schedule with the butterfly kernels, and shows the same pattern: on $4$ ranks, all on NVLink, double send and block-by-block take the same time at every size (ratio $1.00$), and at 64\,MB the ratio is $1.95$, $2.38$, $2.41$ and $2.45$ on $8$, $16$, $32$ and $64$ ranks, against the $2.00$, $2.40$, $2.55$ and $2.61$ of the inter-node traffic and the $2.09$, $2.35$, $2.38$ and $2.41$ of the butterfly.
 This confirms that the cause is in the schedule and not in the kernels.
 

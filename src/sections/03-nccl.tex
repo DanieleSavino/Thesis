@@ -505,7 +505,6 @@ Unlike recursive doubling, \pat{} is defined for any number of ranks.
 \pat{} was introduced in \nccl{} 2.23 with a restriction to one rank (GPU) per node: only its inter-node part is implemented~\cite{jeaugey2025pat}.
 The restriction is one of implementation, not of the algorithm.
 The author notes that intra-node support is possible, as in the CollNet algorithms of \nccl{}, and that the main difficulty is the additional complexity of an already complex algorithm~\cite{jeaugey2025pat}; the case with one GPU per node was the first to be covered because it is the one of the data-parallel groups of LLM training, where tensor parallelism takes the GPUs of a node~\cite{jeaugey2025nccl223}.
-% TODO bib: add jeaugey2025nccl223 = "New Scaling Algorithm and Initialization with NVIDIA Collective Communications Library 2.23", NVIDIA Technical Blog, 2025 (ref [20] of Demystifying NCCL)
 The analysis of~\cite{hu2025demystifying} is based on \nccl{} 2.19.1, predates it and leaves it out of its scope, so the description below comes from~\cite{jeaugey2025pat} and from the source code.
 
 \subsection{Implementation in \nccl{}}\label{sec:nccl-pat-impl}

@@ -1,0 +1,247 @@
+% Software developed for the thesis.
+% Uses the macros of the preamble (\nccl, \bine, \pat) and the colors ch0, ch1, crosslink, localxfer.
+
+\chapter{Software Developed}\label{ch:software}
+
+The algorithms of the previous chapters were developed in two stages.
+The schedules were first prototyped as plain MPI collectives, where every message is visible and can be timed, and only then moved inside \nccl{}, where they are executed by GPU kernels and can only be observed from outside.
+Each stage has its own pair of tools (\cref{fig:sw-overview}):
+\begin{itemize}
+  \item \textbf{CollBench} and \textbf{Collalgo} cover the MPI stage. Collalgo implements the \bine{} collectives over MPI point-to-point calls, and CollBench records the timing of each of those calls, so that a schedule can be checked and inspected message by message.
+  \item \textbf{fastest} and \textbf{unitccl} cover the \nccl{} stage. fastest is a small test framework for C code driven from Python, and unitccl uses it to unit-test the schedule generators of the \nccl{} fork and to run the scaling experiments, either with its own benchmark or with NVIDIA's \texttt{nccl-tests}.
+\end{itemize}
+All four are available on GitHub under the author's account (\texttt{DanieleSavino}); the \nccl{} fork that contains the algorithms is a separate repository and is the subject of \cref{ch:tree,ch:butterfly,ch:pat,ch:treeallreduce}.
+
+\begin{figure}[htbp]
+  \centering
+  \begin{tikzpicture}[x=1cm, y=1cm,
+      repo/.style={draw, rounded corners=2pt, thick, minimum width=2.9cm, minimum height=0.9cm,
+                   align=center, font=\small, fill=white},
+      ext/.style={draw, dashed, rounded corners=2pt, minimum width=2.9cm, minimum height=0.9cm,
+                  align=center, font=\small, text=black!70},
+      dep/.style={-{Stealth[length=2mm]}, thick},
+      use/.style={-{Stealth[length=2mm]}, thick, dashed, black!55}]
+    % MPI stage
+    \node[repo, draw=ch0] (cb) at (0,0) {CollBench\\[-1pt]\scriptsize C99, MPI};
+    \node[repo, draw=ch0] (ca) at (0,2) {Collalgo\\[-1pt]\scriptsize C11, MPI, CUDA};
+    \node[ext] (viz) at (0,-1.9) {JSON traces\\[-1pt]\scriptsize Python plots};
+    \draw[dep] (ca) -- node[right, font=\scriptsize] {submodule} (cb);
+    \draw[use] (cb) -- node[right, font=\scriptsize] {export} (viz);
+    % NCCL stage
+    \node[repo, draw=ch1] (fa) at (4.6,0) {fastest\\[-1pt]\scriptsize C11, pybind11, Python};
+    \node[repo, draw=ch1] (uc) at (4.6,2) {unitccl\\[-1pt]\scriptsize C/CUDA, Python CLI};
+    \node[ext] (nccl) at (8.3,2.9) {\nccl{} fork};
+    \node[ext] (nt) at (8.3,1.1) {\texttt{nccl-tests}};
+    \draw[dep] (uc) -- node[left, font=\scriptsize] {submodule} (fa);
+    \draw[dep] (uc.east) -- ++(0.35,0) |- (nccl.west);
+    \draw[use] (uc.east) -- ++(0.35,0) |- (nt.west);
+    % stage labels
+    \begin{scope}[on background layer]
+      \node[fit=(cb)(ca)(viz), fill=ch0!8, rounded corners=4pt, inner sep=7pt,
+            label={[font=\small]above:MPI prototyping}] {};
+      \node[fit=(fa)(uc)(nccl)(nt)(viz.south -| fa), fill=ch1!8, rounded corners=4pt, inner sep=7pt,
+            label={[font=\small]above:\nccl{} testing and benchmarking}] {};
+    \end{scope}
+  \end{tikzpicture}
+  \caption{The four repositories. Solid arrows: build-time dependencies (git submodules and static linking); dashed arrows: tools that are driven or whose output is consumed.}
+  \label{fig:sw-overview}
+\end{figure}
+
+% ---------------------------------------------------------------------------
+\section{CollBench}\label{sec:sw-collbench}
+
+CollBench is a C99 library that profiles the point-to-point operations of a collective written over MPI.
+Timing a collective as a whole says how long it took, but not \emph{why}: whether a step waits for a late sender, whether one link is slower than the others, or whether the schedule does what the algorithm prescribes.
+CollBench answers these questions by recording every send and receive issued by every rank, with the step of the algorithm it belongs to, and by collecting the records of all the ranks into a single trace.
+
+\paragraph{Operation records.}
+Each operation is described by a \texttt{CB\_OperationData\_t}: the rank that posts it, the peer, the type of operation (send, receive or one of the collectives), the step index of the algorithm (\texttt{algo\_idx}), and three timestamps taken with \texttt{CLOCK\_MONOTONIC}: when the operation is posted, when the rank starts waiting on it, and when it completes.
+For a blocking operation the last two coincide; for a non-blocking one their difference separates the time spent issuing the operation from the time spent waiting for it, which shows how much computation or other communication overlaps with it.
+The records of a rank are appended to a growable list (\texttt{CB\_DistList\_t}).
+
+\paragraph{Instrumentation macros.}
+A collective is instrumented by replacing its MPI calls with the CollBench macros and enclosing its body in a profiling scope:
+\begin{lstlisting}[language=C, numbers=none]
+CB_COLL_START();
+for (...) {                                     /* one iteration per step */
+  if (sender) CB_LSEND(rank, step, buf, n, dt, peer, tag, comm);
+  else        CB_LRECV(rank, step, buf, n, dt, peer, tag, comm);
+}
+CB_COLL_END(comm, rank, root, "out/tree/bine_bcast.json");
+\end{lstlisting}
+\texttt{CB\_LSEND} and \texttt{CB\_LRECV} post the operation, wait for it and record it; the non-blocking variants \texttt{CB\_ILSEND} and \texttt{CB\_ILRECV} record the posting time and leave the request to \texttt{CB\_LWAIT} or \texttt{CB\_LWAITALL}.
+\texttt{CB\_COLL\_END} gathers the lists of all the ranks onto the root with an \texttt{MPI\_Gatherv} (the records travel as an MPI derived datatype registered by \texttt{CB\_init}) and the root writes them as JSON.
+All the macros are compiled only when \texttt{CB\_PROFILE} is defined; otherwise they expand to the bare MPI calls, so the same source builds both the profiled and the production version of a collective with no overhead in the latter.
+Errors are propagated as \texttt{CB\_Error\_t} codes through \texttt{goto}-based cleanup labels, which the scope macros define.
+
+\paragraph{Visualization.}
+Two Python scripts turn a trace into a picture.
+\texttt{tree.py} detects whether the collective flows away from the root (broadcast, scatter) or towards it (reduce, gather), rebuilds the tree from the send records and draws it by step, annotating each edge with the duration of the transfer (\cref{fig:sw-cb-tree}).
+\texttt{butterfly.py} does the same for collectives without a root, in which every rank exchanges with a partner at every step.
+Its \emph{candle} view (\cref{fig:sw-cb-candle}) draws each rank as a horizontal lane and each exchange as a vertical connector between the two lanes, one column per pair, grouped by step, so that the pairing of a step and the distance between partners are read at a glance; the other views draw the same exchanges as a rank-by-step grid, as a ladder, or as the $p$ broadcast trees that a butterfly allgather implicitly contains, one per source block.
+These drawings are how the schedules of \cref{ch:tree,ch:butterfly} were checked visually against the figures of the algorithms before they were moved to \nccl{}.
+
+\begin{figure}[htbp]
+  \centering
+  \includegraphics[width=0.85\linewidth]{collbench_bcast_tree.png}
+  \caption{CollBench trace of the distance-halving \bine{} broadcast of Collalgo on $8$ ranks (four nodes with two GPUs each, CUDA-aware MPI), drawn by \texttt{tree.py}. Each edge is a send, coloured by step and labelled with the time from posting the send to its completion, which includes the time the receiver takes to reach the matching receive.}
+  \label{fig:sw-cb-tree}
+\end{figure}
+
+\begin{figure}[htbp]
+  \centering
+  \includegraphics[width=0.8\linewidth]{collbench_ag_candle.png}
+  \caption{CollBench trace of the block-by-block \bine{} butterfly allgather of Collalgo on $8$ ranks (same setup as \cref{fig:sw-cb-tree}), drawn by \texttt{butterfly.py} in candle mode. Each connector is the exchange between two ranks at one step, coloured by step and labelled with its duration.}
+  \label{fig:sw-cb-candle}
+\end{figure}
+
+% ---------------------------------------------------------------------------
+\section{Collalgo}\label{sec:sw-collalgo}
+
+Collalgo is a C11 library of \bine{} collectives over MPI, built with CMake and linked against CollBench, which it includes as a git submodule.
+It is a workbench rather than a finished library: each collective is a direct transcription of an algorithm with MPI point-to-point calls, written to check a schedule and to look at its trace, and kept free of the buffer management and protocol details that \nccl{} adds.
+The schedule helpers it contains (negabinary conversions, the remapping $\nu$ of the butterfly, the peer of a rank at a step) are the ones later ported to the \nccl{} fork.
+What is worth describing is how the same source runs on host and on device buffers.
+
+\paragraph{One source for host and device buffers.}
+A collective does not take a flag telling it where its buffers are.
+It asks: \texttt{CA\_is\_devptr} calls \texttt{cudaPointerGetAttributes} on the user's buffer and returns true for device and managed memory, and the answer is kept in a local \texttt{use\_cuda}.
+Every operation that touches memory then goes through a small set of unified macros that take this flag:
+\par\noindent\begin{minipage}{\linewidth}
+\begin{lstlisting}[language=C, numbers=none]
+int use_cuda = CA_is_devptr(sendbuff);
+CA_UMALLOC(tmpbuff, bytes, use_cuda);            /* cudaMalloc | malloc */
+CA_UMEMCPY(recvbuff, sendbuff, bytes, use_cuda); /* D2D copy | memcpy   */
+...
+CB_LRECV(rank, step, tmpbuff, count, datatype, peer, 0, comm);
+local_reduce(tmpbuff, recvbuff, count, datatype, op, use_cuda);
+...
+CA_UFREE(tmpbuff, use_cuda);
+\end{lstlisting}
+\end{minipage}\par\smallskip
+The communication itself needs no branch: device pointers are handed to MPI as they are, and a CUDA-aware MPI moves them directly between GPUs.
+The only computation, the local reduction, dispatches to \texttt{MPI\_Reduce\_local} on the host or to a CUDA kernel on the device; the kernel is templated on the element type and on the operation (sum, product, minimum, maximum and the bitwise ones) and selected at run time from the \texttt{MPI\_Datatype} and \texttt{MPI\_Op} arguments, so the collective keeps the MPI signature.
+CUDA is a build option (\texttt{-DCA\_CUDA=ON}): without it, \texttt{CA\_is\_devptr} returns $0$, the unified macros collapse to \texttt{malloc}, \texttt{memcpy} and \texttt{free}, no CUDA header is included, and the library builds on machines without the toolkit.
+CUDA errors are checked by macros that print the failing call with its file and line and jump to the cleanup label of the collective, in the same style as the MPI and CollBench checks, so a failure on the device unwinds the same way as one on the host.
+With this, the \bine{} schedules were first run on GPUs, with the trace of every message, before any \nccl{} code was written.
+
+\paragraph{Benchmark.}
+The \texttt{bench} executable runs every collective once on a known input, on host buffers (and, in CUDA builds, the broadcast and the reduce also on device buffers filled and checked by small kernels), checks the result against the expected one and, when the library is built with \texttt{-DCA\_PROFILE=ON}, writes the CollBench trace of each collective to \texttt{out/tree} or \texttt{out/butterfly}.
+
+% ---------------------------------------------------------------------------
+\section{fastest}\label{sec:sw-fastest}
+
+fastest is a test and micro-benchmark framework for C code in which the tests are written in C and run, selected and analysed from Python.
+It is a general-purpose tool, and unitccl is its main user in this thesis.
+The motivation is that the code under test (here, \nccl{} with its CUDA and MPI dependencies) must be compiled and linked as C, while the orchestration around it (repeating runs, grouping tests, computing statistics, plotting, launching jobs) is much simpler to write in Python.
+
+\paragraph{Test registration.}
+A test is a C function that fills a \texttt{FASTEST\_TestOutput\_t}, and it is declared with one of the registration macros:
+\begin{lstlisting}[language=C, numbers=none]
+FASTEST_CUSTOMTEST_INLINE("standalone/tree/no_self_send", FASTEST_FAIL_ERROR, NULL, {
+    out->exit_status = FASTEST_SUCCESS;
+    /* ... on violation: out->exit_status = FASTEST_ERROR_ASSERT; */
+});
+\end{lstlisting}
+Each macro defines the body as a static function and a second static function marked \texttt{\_\_attribute\_\_((constructor))}, which pushes the test into a global scheduler list when the library is loaded, before \texttt{main} or before the Python module finishes importing.
+There is therefore no central list of tests to maintain: a test exists as soon as its translation unit is linked.
+\texttt{FASTEST\_CUSTOMTEST} takes an existing function, \texttt{\_INLINE} an inline body, and \texttt{\_DINLINE} an inline body and an inline callback that runs after the test, for instance to print or post-process its output.
+Test names are paths, so tests can be selected by prefix.
+
+\paragraph{Outputs.}
+The output of a test records its name, its flags, an exit status, allocation and deallocation counters, the wall-clock time measured by the scheduler around the test, and, for tests that run an inner loop of their own, the mean, the standard deviation and the number of the inner samples.
+Flags and exit statuses are bitmaps.
+The flags select the time unit to report, whether failures are errors, warnings or log entries, and whether memory is tracked; the exit statuses distinguish success and skip from failed assertions, unexpected states, resource, MPI and CUDA errors, so that a single integer tells why a test failed.
+
+\paragraph{Python bindings.}
+The bindings (\texttt{bindings/pybind.cpp}) are built per project with pybind11: the user's static library is linked with \texttt{--whole-archive}, so that every constructor is kept by the linker, and the module name is chosen at build time (\texttt{unitccl} for unitccl).
+At import, the module exposes every registered test name as a constant in a \texttt{tests} submodule, plus \texttt{get\_tests}, \texttt{get\_subtests(prefix)}, \texttt{get\_test(name)} and \texttt{run\_test(name)}; C error codes are translated into the matching Python exceptions.
+A typed stub file is generated next to the module for editor completion.
+
+\paragraph{Runner.}
+The \texttt{fastest} Python package wraps a backend module in a \texttt{Runner}.
+Tests are grouped into \emph{pools}, built from a list of names or from a prefix, and \texttt{compare(*pools, n\_repeats)} runs every test of every pool $n$ times and returns a \texttt{CompareResult} with, for every test, the statistics across repeats (mean, standard deviation, minimum, maximum, median) and, when the backend provides them, the pooled statistics of the inner samples.
+Results can be printed as a report, saved as JSON or CSV, and plotted with a builder-style \texttt{Plotter} that chooses the statistic to show (mean, median, \dots) and the axes.
+
+% ---------------------------------------------------------------------------
+\section{unitccl}\label{sec:sw-unitccl}
+
+unitccl is the test and benchmark suite of the \nccl{} fork.
+It contains the fork and fastest as git submodules, a C/CUDA part linked against the static \nccl{} library and compiled into a fastest backend, and a Python command-line tool, \texttt{unitccl}, that builds everything, runs the tests and the experiments locally or on Slurm, and plots the results.
+\Cref{fig:sw-unitccl} shows how the parts fit together.
+
+\begin{figure}[htbp]
+  \centering
+  \begin{tikzpicture}[x=1cm, y=1cm,
+      box/.style={draw, rounded corners=2pt, minimum height=0.75cm, align=center,
+                  font=\small, fill=white, inner xsep=5pt},
+      arr/.style={-{Stealth[length=2mm]}, thick},
+      lab/.style={font=\scriptsize, text=black!65}]
+    \node[box, minimum width=12.4cm, fill=ch1!8] (cli) at (0,4.1)
+      {\texttt{unitccl} CLI \quad {\scriptsize\texttt{build}\,·\,\texttt{standalone}\,·\,\texttt{scaling}\,·\,\texttt{nccltests}\,·\,\texttt{nsys}\,·\,\texttt{plot}}};
+    \node[box, minimum width=12.4cm] (slurm) at (0,2.95)
+      {Slurm via \texttt{submitit}: one job per rank count, sized from the configuration};
+    \node[box] (fpy) at (-4.2,1.6) {fastest \texttt{Runner}\\[-1pt]\scriptsize pybind module \texttt{unitccl}};
+    \node[box] (std) at (-5.2,0) {standalone tests\\[-1pt]\scriptsize schedule invariants};
+    \node[box] (bt) at (-1.8,0) {scaling tests\\[-1pt]\scriptsize \texttt{popen(mpirun ...)}};
+    \node[box] (ub) at (-1.8,-1.5) {\texttt{unitccl\_bench}\\[-1pt]\scriptsize MPI + \nccl{}, CUDA events};
+    \node[box] (nt) at (2.9,0.8) {\texttt{nccl-tests}\\[-1pt]\scriptsize \texttt{*\_perf}, \texttt{-N} repeats};
+    \node[box] (ns) at (5.45,0.8) {\texttt{nsys}\\[-1pt]\scriptsize profiles};
+    \node[box, fill=ch0!8] (csv) at (2.9,-2.8)
+      {\texttt{<p>\_ranks/<Coll>/<Coll>\_<PROTO>.csv}};
+    \node[box] (plt) at (2.9,-4.0) {plots: ranks, size, heatmap, diff};
+    \node[box, dashed] (fork) at (-5.2,-2.8) {\nccl{} fork\\[-1pt]\scriptsize \texttt{libnccl\_static.a}};
+    \draw[arr] (cli) -- (slurm);
+    \draw[arr] (slurm.south -| fpy) -- (fpy);
+    \draw[arr] (slurm.south -| nt) -- (nt);
+    \draw[arr] (slurm.south -| ns) -- (ns);
+    \draw[arr] (fpy) -- (std);
+    \draw[arr] (fpy) -- (bt);
+    \draw[arr] (bt) -- (ub);
+    \draw[arr, dashed] (std) -- node[lab, left] {links} (fork);
+    \draw[arr, dashed] (ub) -- (fork);
+    \draw[arr] (ub.south) |- (csv.west);
+    \draw[arr] (nt) -- (csv.north -| nt);
+    \draw[arr] (csv) -- (plt);
+  \end{tikzpicture}
+  \caption{Structure of unitccl. The standalone tests and the scaling tests are fastest tests compiled into the \texttt{unitccl} Python module; the scaling tests and \texttt{nccl-tests} write the same CSV schema, so the plots do not depend on which benchmark produced the data.}
+  \label{fig:sw-unitccl}
+\end{figure}
+
+\paragraph{Standalone tests.}
+The standalone tests call the schedule generators of the fork directly on the host, without GPUs or MPI: \texttt{ncclGetBineTree} for the tree, and \texttt{ncclGetBineButterflyDdbl} and \texttt{ncclGetBineButterflyDhlv} for the distance-doubling and distance-halving butterflies, with $7$, $7$ and $8$ tests respectively.
+Each test checks one of the invariants of \cref{sec:tree-testing,sec:bfly-testing}, the distance-halving ones including the reversal of the distance-doubling table, the non-increasing distance and the circular windows, over every power of two up to $2^{12}$ ranks and, for the tree, every root, and reports the first violation it finds with the values of $p$, root, rank and step.
+Because they need neither GPUs nor a network, they run in seconds on a laptop and were run after every change to the schedule code.
+
+\paragraph{Scaling with \texttt{unitccl\_bench}.}
+\texttt{unitccl\_bench} is a small MPI and \nccl{} program that runs one collective of a given size with one MPI rank per GPU.
+The \nccl{} communicator is created from a unique identifier broadcast with MPI.
+Before every iteration the ranks synchronise with an \texttt{MPI\_Barrier}, so that each iteration starts from aligned ranks, and the collective is timed on the GPU with CUDA events.
+The time of an iteration is the maximum over the ranks (an \texttt{MPI\_Reduce} with \texttt{MPI\_MAX}), because a collective is finished only when its slowest rank is, and rank $0$ reports the median, mean, standard deviation and minimum of these values over the measured iterations ($40$ after $10$ warmup iterations by default).
+The send buffer of rank $r$ holds $(r+1)\,i$ at index $i$, and the receive buffer is filled with NaNs before every iteration, so that the optional correctness check on the first iteration detects both wrong and missing elements.
+The algorithm is selected with \texttt{NCCL\_ALGO}, and the \bine{} variant and buffer-management strategy with the environment variables of the fork.
+
+On the fastest side, a scaling test is one (collective, algorithm, size) triple, registered by a macro that expands to the six sizes from 1\,kB to 64\,MB:
+\begin{lstlisting}[language=C, numbers=none]
+DEFINE_TEST_1KB_64MB("AllGather", "BINE")
+DEFINE_TEST_1KB_64MB("AllGather", "RING")
+DEFINE_TEST_1KB_64MB("AllGather", "PAT")
+\end{lstlisting}
+Each test launches \texttt{unitccl\_bench} with \texttt{mpirun} through \texttt{popen}, parses the statistics it prints into its fastest output, and sets the exit status from the worst status of any rank.
+Running the benchmark as a separate process keeps every test in a fresh \nccl{} environment, which is required because \nccl{} reads most of its configuration from the environment only once, at initialisation.
+
+\paragraph{Scaling with \texttt{nccl-tests}.}
+The \texttt{nccltests} subcommand runs the same sweep with NVIDIA's \texttt{nccl-tests} instead, as an independent check of \texttt{unitccl\_bench}.
+\texttt{nccl-tests} times its iterations back to back with no barrier in between and reports their mean, so it measures a pipelined throughput rather than the latency of an isolated collective; repeating each size $R$ times (\texttt{-N}) gives $R$ samples per point.
+Its sizes are converted so that both tools refer to the same per-rank buffer, and its results are written to the same CSV files.
+
+\paragraph{Sweeps on Slurm.}
+A sweep is described by the collectives, algorithms, protocols and rank counts to measure.
+For each rank count, the CLI submits one Slurm job, sized from the configuration of the machine (GPUs per node, partition, account and modules, stored in a per-user JSON file with presets for MeluXina and Leonardo), through \texttt{submitit}, and follows the jobs in a live terminal dashboard from which they can be cancelled.
+For \nccl{}'s native \pat{}, which only runs with one GPU per node, the jobs are automatically placed one rank per node, and their results are merged into the same files as the others.
+When the algorithm is \bine{}, the sweep crosses the variants (tree, butterfly, \pat{}) with the buffer-management strategies (block by block, permutation, send, double send) of \cref{ch:butterfly,ch:pat}, skipping the combinations that do not exist (the tree has a single strategy, and the tree and \bine{}-\pat{} have no \texttt{LL} implementation).
+
+\paragraph{Results and profiling.}
+The results are stored as one CSV file per collective and protocol under a directory per rank count, with one row per algorithm, configuration and size holding the statistics of that point (mean, median, standard deviation, minimum and maximum, plus the per-iteration statistics of \texttt{unitccl\_bench}).
+The \texttt{plot} subcommand produces the four kinds of plots used in \cref{ch:tree,ch:butterfly,ch:pat,ch:treeallreduce}: time against the number of ranks for each size, time against size for each number of ranks, the relative difference between two algorithms, and the heatmaps of the fastest algorithm at each point.
+Finally, the \texttt{nsys} subcommand runs the benchmark under Nsight Systems, exports the kernel, memory-copy and NVTX summaries to CSV and compares the kernel time of \bine{} and of the ring, to tell the time spent in the kernels apart from the time spent around them.

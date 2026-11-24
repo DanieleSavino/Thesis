@@ -390,7 +390,7 @@ This section compares the Bine broadcast and reduce of Sec.~\ref{sec:tree-collec
 \paragraph{Setup.}
 Experiments run on the MeluXina supercomputer (see the acknowledgments), on nodes with four NVIDIA A100 GPUs connected by NVLink.
 We use $p\in\{4,8,16,32,64,128\}$ ranks (one to 32 nodes, one rank per GPU), message sizes from 1\,kB to 64\,MB, and root $0$.
-Each point is the mean over 40 iterations after 10 warmup iterations.
+Each point is the median latency of 40 measured iterations, after 10 warmup iterations.
 Both axes of the figures are logarithmic.
 Since a node holds four GPUs, $p=4$ is entirely intra-node, and every larger $p$ also uses the inter-node network.
 \texttt{LL128} is not measured: it relies on $128$-byte stores being delivered atomically and in order, it is usually adopted on nv-linked intra-node communication (Sec.~\ref{sec:nccl-protocols}), and \nccl{} does not enable it on this system, unless forcing it with NCCL\_PROTO=LL128, beyond the single-node case $p=4$, which would not give a comparison across scales.
@@ -398,14 +398,14 @@ Since a node holds four GPUs, $p=4$ is entirely intra-node, and every larger $p$
 \begin{figure}[H]
   \centering
   \includegraphics[width=\linewidth]{assets/plots/Bcast_SIMPLE_Ranks.png}
-  \caption{Broadcast: mean time versus number of ranks, Bine (blue) against ring (red), for six message sizes. Solid lines with filled markers: \texttt{SIMPLE} protocol; dashed lines with hollow markers: \texttt{LL} protocol.}
+  \caption{Broadcast: median latency versus number of ranks, Bine (blue) against ring (red), for six message sizes. Solid lines with filled markers: \texttt{SIMPLE} protocol; dashed lines with hollow markers: \texttt{LL} protocol.}
   \label{fig:tree-bcast}
 \end{figure}
 
 \begin{figure}[H]
   \centering
   \includegraphics[width=\linewidth]{assets/plots/Reduce_SIMPLE_Ranks.png}
-  \caption{Reduce: mean time versus number of ranks, Bine (blue) against ring (red), for six message sizes. Solid lines with filled markers: \texttt{SIMPLE} protocol; dashed lines with hollow markers: \texttt{LL} protocol.}
+  \caption{Reduce: median latency versus number of ranks, Bine (blue) against ring (red), for six message sizes. Solid lines with filled markers: \texttt{SIMPLE} protocol; dashed lines with hollow markers: \texttt{LL} protocol.}
   \label{fig:tree-reduce}
 \end{figure}
 
@@ -471,7 +471,7 @@ The size on the axis of Fig.~\ref{fig:tree-allgather} is that of the block contr
 \begin{figure}[H]
   \centering
   \includegraphics[width=\linewidth]{assets/plots/AllGather_SIMPLE_LL_Ranks.png}
-  \caption{Ring allgather: mean time versus number of ranks, \texttt{SIMPLE} (solid, filled markers) against \texttt{LL} (dashed, hollow markers), for six block sizes, up to $p=32$.}
+  \caption{Ring allgather: median latency versus number of ranks, \texttt{SIMPLE} (solid, filled markers) against \texttt{LL} (dashed, hollow markers), for six block sizes, up to $p=32$.}
   \label{fig:tree-allgather}
 \end{figure}
 

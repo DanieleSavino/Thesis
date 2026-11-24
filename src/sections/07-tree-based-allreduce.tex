@@ -267,8 +267,7 @@ The vector sizes are $1$\,kB, $16$\,kB, $256$\,kB, $1$\,MB, $4$\,MB and $64$\,MB
 Each algorithm is run with the LL and with the \texttt{Simple} protocol; LL128 is not measured, for the reasons given in \cref{ch:tree}.
 The algorithms are: the \nccl{} tree (\texttt{TREE}) and ring (\texttt{RING}); the Bine tree allreduce of this chapter (\texttt{BINE-TREE}); and the Bine butterfly allreduce with the send strategy (\texttt{BINE-BUTTERFLY-SEND}, \cref{ch:butterfly}).
 Each run consists of $10$ warmup iterations followed by $40$ measured iterations.
-Each point is the median latency of the measured iterations; unlike in \cref{ch:tree}, where the mean is reported, here the median is used, because the first iterations of \nccl{} are slow (the work is partitioned among the channels and the connections are warmed up) and the median discards the outliers.
-No point is repeated across runs, so there are no confidence intervals, and differences of a few percent should not be read as significant.
+Each point is the median latency of the measured iterations.
 \paragraph{Overview.}
 \Cref{fig:tar-heatmap-simple} shows the fastest algorithm for each size and number of ranks with the \texttt{Simple} protocol, and \cref{tab:tar-speedup} the speedup of the Bine tree over the best of the \nccl{} tree and ring.
 \Cref{fig:tar-scaling} shows how the latency of the four algorithms grows with the number of ranks, \cref{fig:tar-heatmap} the fastest among the eight combinations of algorithm and protocol, and \cref{fig:tar-scaling-bt} the Bine tree against the \nccl{} tree and the Bine butterfly alone.

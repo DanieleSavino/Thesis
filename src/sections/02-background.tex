@@ -282,42 +282,34 @@ This example also assumes that rank identifiers are close to the physical positi
 
 \begin{figure}[H]
   \centering
+  \captionsetup[subfigure]{skip=2pt}
+  \setlength{\tabcolsep}{2pt}
   \begin{subfigure}[b]{\linewidth}
     \centering
-    \fattree{
-      \xf{r0}{r1}{local}{1}
-      \xf{r0}{r2}{cross}{2}
-      \xf{r1}{r3}{cross}{2}
-      \xf{r0}{r4}{cross}{3}
-      \xf{r1}{r5}{cross}{3}
-      \xf{r2}{r6}{cross}{3}
-      \xf{r3}{r7}{cross}{3}
-    }
-    \caption{Distance-doubling: steps 2 and 3 cross the uplinks, for $2n+4n=6n$ bytes.}
+    \begin{tabular}{ccc}
+      \ftstep{0}{0/1}{} &
+      \ftstep{0,1}{0/2, 1/3}{0/2n, 1/2n} &
+      \ftstep{0,1,2,3}{0/4, 1/5, 2/6, 3/7}{0/2n, 1/2n, 2/2n, 3/2n} \\
+      step 1 & step 2 & step 3
+    \end{tabular}
+    \caption{Distance-doubling: steps 2 and 3 cross the uplinks, for $2n+4n=6n$ bytes; at step 2 the two transfers share the uplink of the first switch.}
     \label{fig:bg-locality-doubling}
   \end{subfigure}
 
-  \vspace{1.5em}
+  \vspace{1em}
 
   \begin{subfigure}[b]{\linewidth}
     \centering
-    \fattree{
-      \xf{r0}{r4}{cross}{1}
-      \xf{r0}{r2}{cross}{2}
-      \xf{r4}{r6}{cross}{2}
-      \xf{r0}{r1}{local}{3}
-      \xf{r2}{r3}{local}{3}
-      \xf{r4}{r5}{local}{3}
-      \xf{r6}{r7}{local}{3}
-    }
-    \caption{Distance-halving: only steps 1 and 2 cross the uplinks, for $n+2n=3n$ bytes,
-             and the last step is entirely local.}
+    \begin{tabular}{ccc}
+      \ftstep{0}{0/4}{0/n, 2/n} &
+      \ftstep{0,4}{0/2, 4/6}{0/n, 1/n, 2/n, 3/n} &
+      \ftstep{0,2,4,6}{0/1, 2/3, 4/5, 6/7}{} \\
+      step 1 & step 2 & step 3
+    \end{tabular}
+    \caption{Distance-halving: only steps 1 and 2 cross the uplinks, for $n+2n=3n$ bytes, and the last step, the one with the most transfers, is entirely local.}
     \label{fig:bg-locality-halving}
   \end{subfigure}
-  \caption{Broadcast from rank 0 over eight ranks on a 2:1 oversubscribed fat tree, where
-           each leaf switch serves two consecutive ranks. Arcs are transfers labelled with
-           their step; red arcs cross the (bottleneck) uplinks, green arcs stay under a
-           single leaf switch.}
+  \caption{Broadcast from rank 0 over eight ranks on a 2:1 oversubscribed fat tree (leaf switches at the middle level, spine at the top), where each leaf switch serves two consecutive ranks. Each step shows the links used by its transfers: red paths cross the (bottleneck) uplinks, green paths stay under a single leaf switch. Gray ranks already hold the data; the label on an uplink is the volume it carries in that step.}
   \label{fig:bg-locality}
 \end{figure}
 

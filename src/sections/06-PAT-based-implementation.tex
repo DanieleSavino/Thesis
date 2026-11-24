@@ -329,4 +329,210 @@ Finding the leaders costs $O(\sum_C \lvert C\rvert^2)$ over the cycles $C$ of $f
 %==============================================================================
 \section{Experimental results}\label{sec:pat-exp}
 
-\todo{Experimental results: comparison with the kernels of \cref{ch:butterfly} (slice and pos mode), the ring and the native \pat{}, for the four strategies.}
+This section compares the allgather of this chapter (\bine{}-\pat{}) with the kernels of \cref{ch:butterfly} (\bine{} butterfly) and with the native \nccl{} ring.
+We first compare the two implementations of \bine{} (\cref{sec:pat-res-bfly}), then the four strategies with one another (\cref{sec:pat-res-modes}), both with the ring (\cref{sec:pat-res-ring}), and finally \bine{}-\pat{} with the native \pat{} allgather, on a different configuration with one rank per node (\cref{sec:pat-res-native}).
+
+\paragraph{Setup.}
+The measurements come from the same runs as those of \cref{sec:bfly-results}: Leonardo, nodes with four NVIDIA A100 GPUs connected by NVLink, $p\in\{4,8,16,32,64\}$ ranks (one to 16 nodes, one rank per GPU, consecutive ranks on the same node), block sizes from 1\,kB to 64\,MB, $10$ warmup and $40$ measured iterations, median latency.
+Only the allgather with \texttt{SIMPLE} is measured for \bine{}-\pat{} (\cref{sec:pat-prims}); the butterfly and the ring are also shown with \texttt{LL} where relevant.
+The butterfly runs with the partition of \cref{eq:bfly-pos} (pos mode for small blocks, slice mode otherwise), \bine{}-\pat{} always in slice mode (\cref{sec:pat-mapping}).
+
+%------------------------------------------------------------------------------
+\subsection{\pat{} machinery versus butterfly kernels}\label{sec:pat-res-bfly}
+
+\Cref{fig:pat-scaling} compares the two implementations of \bine{}, each with its best strategy at each point, and \cref{tab:pat-vs-bfly} isolates the effect of the machinery by comparing the same strategy, block-by-block, which runs in slice mode in both implementations and therefore issues the same transfers in the butterfly kernels.
+
+\begin{figure}[!tbp]
+  \centering
+  \includegraphics[width=0.92\linewidth]{AllGather_SIMPLE_vs_ranks_by_size_BINE_bm-best.png}
+  \caption{Allgather with \texttt{SIMPLE}: median latency versus number of ranks, \bine{} butterfly (blue) against \bine{}-\pat{} (purple), each with its best strategy, for six block sizes. Both axes are logarithmic.}
+  \label{fig:pat-scaling}
+\end{figure}
+
+\begin{table}[!htbp]
+\centering
+\small
+\setlength{\tabcolsep}{4pt}
+\renewcommand{\arraystretch}{1.1}
+\sisetup{table-format=1.2, detect-weight=true, mode=text}
+\caption{Median latency of \bine{}-\pat{} divided by that of the \bine{} butterfly, allgather with \texttt{SIMPLE}: same strategy (block-by-block, slice mode in both) and best strategy of each implementation. A value below $1$ means that \bine{}-\pat{} is faster; these values are in bold.}
+\label{tab:pat-vs-bfly}
+\begin{tabular}{@{}l *{5}{S} @{\hspace{2em}} *{5}{S}@{}}
+\toprule
+ & \multicolumn{5}{c}{Block-by-block} & \multicolumn{5}{c}{Best strategy} \\
+\cmidrule(lr){2-6}\cmidrule(l){7-11}
+Block size & {$p{=}4$} & {8} & {16} & {32} & {64} & {$p{=}4$} & {8} & {16} & {32} & {64} \\
+\midrule
+1\,kB   & {\bfseries 0.94} & {\bfseries 0.94} & {\bfseries 0.99} & 1.07 & {\bfseries 0.71} & {\bfseries 0.98} & {\bfseries 0.95} & 1.11 & 1.52 & 2.19 \\
+16\,kB  & {\bfseries 0.94} & {\bfseries 0.98} & 1.19 & 1.41 & 1.71 & {\bfseries 0.95} & {\bfseries 0.98} & 1.19 & 1.41 & 1.79 \\
+256\,kB & {\bfseries 0.94} & {\bfseries 0.96} & 1.05 & 1.09 & 1.14 & {\bfseries 0.94} & {\bfseries 0.96} & 1.05 & 1.09 & 1.14 \\
+1\,MB   & {\bfseries 0.94} & 1.03 & 1.05 & 1.03 & 1.09 & {\bfseries 0.94} & 1.03 & 1.05 & 1.03 & 1.09 \\
+4\,MB   & {\bfseries 0.91} & {\bfseries 0.88} & 1.03 & 1.06 & 1.12 & {\bfseries 0.91} & {\bfseries 0.88} & 1.03 & 1.06 & 1.12 \\
+64\,MB  & {\bfseries 0.95} & 1.11 & 1.13 & 1.11 & 1.10 & {\bfseries 0.96} & 1.11 & 1.13 & 1.11 & 1.10 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+The aggregation does not deliver the gain expected in \cref{sec:pat-motivation}.
+\bine{}-\pat{} is faster than the butterfly only with few ranks, by $2$--$12\,\%$ (on $4$ ranks at every size, on $8$ ranks at four of the six sizes), and from $16$ ranks on it is slower at every size: by $3$--$14\,\%$ from 256\,kB on, and by much more for small blocks, up to $2.2\times$ at 1\,kB on $64$ ranks.
+The gap at small sizes is not a matter of strategy: the best strategy of \bine{}-\pat{} is block-by-block almost everywhere, and against the same strategy of the butterfly it is still $1.2$--$1.7\times$ slower at 16\,kB from $16$ ranks on (\cref{tab:pat-vs-bfly}).
+The only point where \bine{}-\pat{} wins clearly, block-by-block at 1\,kB on $64$ ranks ($0.71$), is the irregular block-by-block point of the butterfly noted in \cref{sec:bfly-res-modes}.
+
+\paragraph{Small blocks: the cost of an operation.}
+The solid purple lines of \cref{fig:pat-scaling} show that for small blocks the latency of \bine{}-\pat{} is linear in $p$, not logarithmic.
+At 1\,kB it grows from $47$ to $435$\,\textmu s between $4$ and $64$ ranks, by $6$--$8$\,\textmu s per added rank at every doubling (at 16\,kB by $7$--$9$\,\textmu s), close to the $8$--$11$\,\textmu s of the ring with \texttt{SIMPLE}; the butterfly with send in pos mode adds about $1.3$\,\textmu s per rank between $32$ and $64$ ranks.
+The number of network transfers is not the cause: at these sizes $P$ is large, every step fits in one slot, and a channel posts $s$ messages (\cref{sec:pat-geom}).
+What remains linear is the number of operations: a channel moves $n_c(p-1)$ pieces in the butterfly, and each of them is one send and one receive, i.e., $2(p-1)$ entries of the ring for a single chunk, each executed by the workers in order, with a \texttt{patBarrier} and the polling of the ring (\cref{alg:pat-kernel}).
+The aggregation removes the empty FIFO steps of \cref{fig:bfly-slots}, but not the per-piece work on the device, and with a single group of workers the latter is serialized.
+The butterfly kernels of block-by-block also issue one call per block, but send and receive progress in two groups of threads (\cref{sec:bfly-kernels}), so the two halves of the work overlap; this is consistent with the per-rank cost of block-by-block at 16\,kB being about twice as large in \bine{}-\pat{} ($7$--$9$\,\textmu s) as in the butterfly ($3.6$--$4.7$\,\textmu s, between $8$ and $64$ ranks).
+
+Two changes would reduce this cost, both available in the native \pat{}.
+The first is a parallel factor larger than one, i.e., several groups of workers executing independent operations (\cref{sec:pat-kernel}); the second is to keep a received piece in the slot and forward it from there, as \pat{} does (\cref{tab:pat-vs-bine}): in the butterfly the half received at a step is part of the window sent at the next one, so its receive and its send could be one operation, which would remove the extra copy and part of the operations.
+
+\paragraph{Large blocks.}
+From 256\,kB on the two implementations are within $15\,\%$, with \bine{}-\pat{} slower by $3$--$14\,\%$ from $16$ ranks on.
+With large blocks the pieces are full chunks in both implementations ($P=1$, \cref{sec:pat-geom}), so the aggregation has nothing to save, and \bine{}-\pat{} keeps the costs of \cref{sec:pat-prims}: one more local copy per received piece and sends and receives alternated slot by slot in the same threads, which limits the slots in flight on a connection.
+On $4$ ranks \bine{}-\pat{} is instead $4$--$9\,\%$ faster at every size, and on $8$ ranks it is faster up to 256\,kB and at 4\,MB.
+With few ranks the steps are few and short, and the setup that the butterfly repeats at every step (two \texttt{Primitives} objects and a barrier of the whole block, \cref{sec:pat-motivation}) weighs more; \bine{}-\pat{} builds its primitives once per kernel.
+
+%------------------------------------------------------------------------------
+\FloatBarrier
+\subsection{The four strategies}\label{sec:pat-res-modes}
+
+\Cref{fig:pat-modes} shows the fastest strategy of either implementation at each point, and \cref{tab:pat-modes} the cost of the strategies relative to block-by-block on $64$ ranks, for both implementations.
+
+\begin{figure}[!tbp]
+  \centering
+  \includegraphics[width=0.73\linewidth]{AllGather_SIMPLE_best_algo_heatmap_BINE.png}
+  \caption{Allgather with \texttt{SIMPLE}: fastest \bine{} implementation and strategy for each block size and number of ranks (median latency), without the ring. Each cell lists the other combinations with the percentage by which they are slower. Bf: \bine{} butterfly, Pa: \bine{}-\pat{}; B, S, P, D: block-by-block, send, permute and double send.}
+  \label{fig:pat-modes}
+\end{figure}
+
+\begin{table}[htbp]
+\centering
+\small
+\setlength{\tabcolsep}{4pt}
+\renewcommand{\arraystretch}{1.1}
+\sisetup{table-format=1.2, detect-weight=true, mode=text}
+\caption{Latency of send, double send and permute relative to block-by-block of the same implementation, allgather with \texttt{SIMPLE} on $64$ ranks (a value below $1$ means faster than block-by-block). The butterfly columns are those of \cref{tab:bfly-modes}.}
+\label{tab:pat-modes}
+\begin{tabular}{@{}l *{3}{S} @{\hspace{2em}} *{3}{S}@{}}
+\toprule
+ & \multicolumn{3}{c}{\bine{}-\pat{}} & \multicolumn{3}{c}{\bine{} butterfly} \\
+\cmidrule(lr){2-4}\cmidrule(l){5-7}
+Block size & {send} & {double} & {permute} & {send} & {double} & {permute} \\
+\midrule
+1\,kB   & 1.01 & 0.97 & 1.26 & 0.31 & 0.32 & 0.83 \\
+16\,kB  & 1.00 & 1.04 & 1.37 & 0.95 & 1.15 & 2.43 \\
+256\,kB & 1.08 & 1.91 & 3.16 & 1.09 & 1.93 & 3.38 \\
+1\,MB   & 1.06 & 2.20 & 3.97 & 1.05 & 2.11 & 4.58 \\
+4\,MB   & 1.04 & 2.51 & 4.36 & 1.09 & 2.61 & 4.99 \\
+64\,MB  & 1.04 & 2.45 & 4.46 & 1.03 & 2.41 & 4.95 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+In \bine{}-\pat{} the four strategies differ only in the pre-step, the order of the pieces and the post-step (\cref{tab:pat-strategies}); every strategy runs in slice mode and every piece is packed in a slot, so the data layout no longer changes the number of transfers.
+Below 16\,kB the four strategies are therefore within $1$--$37\,\%$ of one another, and send and double send lose the advantage of $3\times$ they have in the butterfly at 1\,kB, which came from pos mode and not from the strategy (\cref{sec:bfly-res-modes}).
+Block-by-block, which has neither a pre-step nor a post-step, is the best or within $3\,\%$ of the best at every point.
+
+The extra costs of the other strategies are those of the butterfly.
+Send pays the exchange of the pre-step, $10$--$29\,\%$ on $4$ to $16$ ranks and $1$--$8\,\%$ on $64$, since it moves one block against the $p-1$ of the butterfly.
+Permute pays the in-place permutation of the whole output buffer (\cref{sec:pat-permute}), $4$--$4.5\times$ the time of block-by-block from 1\,MB on on $64$ ranks; in absolute terms it takes within $9\,\%$ of the time of permute in the butterfly from 16\,kB on, so restricting the permutation to the slice of each channel neither helps nor hurts noticeably.
+
+\paragraph{Double send.}
+Double send is $1.9$--$2.5\times$ slower than block-by-block from 256\,kB on, as in the butterfly (\cref{sec:bfly-res-modes}).
+\Cref{sec:bfly-res-modes} attributes this to the schedule: the distance-halving schedule sends its largest windows to the farthest partners, which are on other nodes, and moves $2$--$2.6\times$ as many blocks over the network as the distance-doubling one (\cref{fig:bfly-dh-internode,tab:bfly-internode}).
+\bine{}-\pat{} shares only the schedule with the butterfly kernels, and shows the same pattern: on $4$ ranks, all on NVLink, double send and block-by-block take the same time at every size (ratio $1.00$), and at 64\,MB the ratio is $1.95$, $2.38$, $2.41$ and $2.45$ on $8$, $16$, $32$ and $64$ ranks, against the $2.00$, $2.40$, $2.55$ and $2.61$ of the inter-node traffic and the $2.09$, $2.35$, $2.38$ and $2.41$ of the butterfly.
+This confirms that the cause is in the schedule and not in the kernels.
+
+%------------------------------------------------------------------------------
+\FloatBarrier
+\subsection{Comparison with the ring}\label{sec:pat-res-ring}
+
+\Cref{fig:pat-heatmap-ring} adds the ring with both protocols and the butterfly with \texttt{LL}.
+With \texttt{SIMPLE} on both sides \bine{}-\pat{} is faster than the ring for small blocks on many ranks: by $1.09$--$1.32\times$ at 1\,kB from $16$ ranks on and by $1.09$--$1.18\times$ at 16\,kB from $8$ ranks on, against up to $2.9\times$ for the butterfly (\cref{sec:bfly-res-ring}), since its latency is linear in $p$ like that of the ring.
+From 1\,MB on it is $1.3$--$2.2\times$ slower than the ring, slightly more than the butterfly.
+\bine{}-\pat{} has no \texttt{LL} variant, and the ring with \texttt{LL} is $2.3$--$3.3\times$ faster than it at 1\,kB and 16\,kB, so it is never the fastest algorithm in \cref{fig:pat-heatmap-ring}.
+
+\begin{figure}[!tbp]
+  \centering
+  \includegraphics[width=0.95\linewidth]{AllGather_SIMPLE+LL_best_algo_heatmap_bm-best.png}
+  \caption{Allgather: fastest algorithm and protocol for each block size and number of ranks (median latency), each \bine{} implementation with its best strategy. Each cell lists the other combinations with the percentage by which they are slower. Bf: \bine{} butterfly, Pa: \bine{}-\pat{}, R: \nccl{} ring; the suffixes S and LL are the protocols.}
+  \label{fig:pat-heatmap-ring}
+\end{figure}
+
+\subsection{Comparison with the native \pat{}}\label{sec:pat-res-native}
+
+The native \pat{} allgather runs only with one rank per node (\cref{sec:nccl-pat}), so it cannot be compared on the configuration above, where each node hosts four ranks.
+We compare it with \bine{}-\pat{} and with the ring on a separate set of runs with one rank per node.
+
+\paragraph{Setup.}
+These runs use the MeluXina supercomputer, the system of \cref{ch:tree}, with nodes of four NVIDIA A100 GPUs, of which only one is used: $p\in\{4,8,16\}$ ranks on as many nodes, so every transfer crosses the network and NVLink is not used.
+Sizes, iterations and statistics are those of the runs above (1\,kB to 64\,MB per block, $10$ warmup and $40$ measured iterations, median latency).
+The native \pat{} exists only for \texttt{SIMPLE}, so the comparison is with \texttt{SIMPLE}, and the ring is also given with \texttt{LL}.
+The butterfly kernels of \cref{ch:butterfly} were not run in this configuration.
+Since the system is not the same, the absolute times are not comparable with those of the previous sections.
+
+\Cref{fig:pat-native-scaling} shows the latency of the three algorithms, \bine{}-\pat{} with its best strategy, and \cref{tab:pat-native} the ratios to the native \pat{}.
+
+\begin{figure}[!tbp]
+  \centering
+  \includegraphics[width=0.92\linewidth]{AllGather_SIMPLE_vs_ranks_by_size_PAT-1ppn.png}
+  \caption{Allgather with \texttt{SIMPLE} and one rank per node (MeluXina): median latency versus number of ranks, \bine{}-\pat{} with its best strategy (purple), native \pat{} (green) and \nccl{} ring (red), for six block sizes. Both axes are logarithmic.}
+  \label{fig:pat-native-scaling}
+\end{figure}
+
+\begin{table}[htbp]
+\centering
+\small
+\setlength{\tabcolsep}{4pt}
+\renewcommand{\arraystretch}{1.1}
+\sisetup{table-format=1.2, detect-weight=true, mode=text}
+\caption{Allgather with one rank per node (MeluXina): median latency of \bine{}-\pat{} with its best strategy, and of the ring with \texttt{SIMPLE} and with \texttt{LL}, divided by that of the native \pat{} (\texttt{SIMPLE}). A value below $1$ means faster than the native \pat{}; these values are in bold.}
+\label{tab:pat-native}
+\begin{tabular}{@{}l *{3}{S} @{\hspace{1.5em}} *{3}{S} @{\hspace{1.5em}} *{3}{S}@{}}
+\toprule
+ & \multicolumn{3}{c}{\bine{}-\pat{}} & \multicolumn{3}{c}{Ring, \texttt{SIMPLE}} & \multicolumn{3}{c}{Ring, \texttt{LL}} \\
+\cmidrule(lr){2-4}\cmidrule(lr){5-7}\cmidrule(l){8-10}
+Block size & {$p{=}4$} & {8} & {16} & {$p{=}4$} & {8} & {16} & {$p{=}4$} & {8} & {16} \\
+\midrule
+1\,kB   & 1.23 & 1.29 & 1.47 & 1.26 & 1.65 & 2.27 & {\bfseries 0.63} & {\bfseries 0.75} & 1.11 \\
+16\,kB  & 1.17 & 1.21 & 1.14 & 1.33 & 1.77 & 1.97 & {\bfseries 0.86} & 1.47 & 1.72 \\
+256\,kB & 1.12 & 1.07 & 1.00 & 1.12 & 1.10 & 1.02 & 1.85 & 2.06 & 1.92 \\
+1\,MB   & 1.03 & {\bfseries 0.97} & {\bfseries 0.92} & {\bfseries 0.99} & {\bfseries 0.93} & {\bfseries 0.96} & 2.07 & 2.13 & 2.06 \\
+4\,MB   & 1.01 & 1.01 & {\bfseries 0.95} & 1.05 & 1.00 & {\bfseries 0.93} & 2.30 & 2.29 & 2.17 \\
+64\,MB  & {\bfseries 0.97} & 1.01 & {\bfseries 0.93} & 1.01 & {\bfseries 0.98} & {\bfseries 0.94} & 2.18 & 2.40 & 2.13 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\paragraph{Small blocks.}
+Up to 16\,kB the native \pat{} is the fastest algorithm with \texttt{SIMPLE}, and \bine{}-\pat{} is $1.14$--$1.47\times$ slower.
+At 1\,kB the gap grows with $p$: the native \pat{} goes from $64$ to $127$\,\textmu s between $4$ and $16$ ranks, about $7$ and $4$\,\textmu s per added rank, while \bine{}-\pat{} goes from $78$ to $186$\,\textmu s, about $11$ and $8$\,\textmu s per added rank.
+This is the per-operation cost of \cref{sec:pat-res-bfly}, now measured against the same machinery: the two kernels share the ring of descriptors, the workers and \texttt{patCopy}, and differ in the schedule and in the two features that \bine{}-\pat{} lacks.
+The native \pat{} keeps the received data in the slot and forwards it in the same operation, and runs several groups of workers in parallel, while in \bine{}-\pat{} every piece is a separate send and receive executed by one group (\cref{tab:pat-vs-bine}).
+The gap at small sizes therefore comes from the execution and not from the schedule.
+Both are still much faster than the ring with \texttt{SIMPLE}, whose latency is linear in $p$ with a larger slope ($18$\,\textmu s per added rank at 1\,kB): at $16$ ranks \bine{}-\pat{} is $1.55\times$ faster at 1\,kB and $1.74\times$ at 16\,kB.
+The ring with \texttt{LL} is the fastest at 1\,kB on $4$ and $8$ ranks, but at $16$ ranks the native \pat{} overtakes it at 1\,kB, and both \pat{} implementations are faster than it at 16\,kB from $8$ ranks on (\bine{}-\pat{} by $1.22$ and $1.51\times$).
+
+\paragraph{Large blocks.}
+From 256\,kB on the three algorithms with \texttt{SIMPLE} are within $12\,\%$ of one another, and from 1\,MB within $8\,\%$; the ring with \texttt{LL} is $1.6$--$2.3\times$ slower than with \texttt{SIMPLE}.
+With one rank per node every transfer crosses the network, which is the bottleneck, and the three move the same volume, $\tfrac{p-1}{p}n$ per rank.
+\bine{}-\pat{} is $5$--$8\,\%$ faster than the native \pat{} on $16$ ranks from 1\,MB on.
+This is consistent with the shorter distances of the \bine{} schedule (\cref{sec:bg-bine-butterfly}), which matter on a network whose cost depends on the distance between nodes.
+
+\paragraph{Strategies.}
+The strategies keep the ordering of the configuration with four ranks per node, with one exception.
+Send pays its pre-step ($1.02$--$1.33\times$ block-by-block, decreasing with $p$) and permute its permutation ($1.9$--$2.4\times$ from 1\,MB on).
+Double send, instead, takes the same time as block-by-block at every point ($0.96$--$1.01\times$) and is the best strategy at $11$ of the $18$ points.
+With one rank per node all partners are on other nodes, so the distance-halving schedule no longer moves more data over the network than the distance-doubling one, and its slowdown disappears.
+This is the counterpart of the measurement on $4$ ranks with four ranks per node, where all partners were on NVLink, and confirms that the slowdown of double send in \cref{sec:pat-res-modes,sec:bfly-res-modes} comes from the hierarchy of the system (\cref{tab:bfly-internode}).
+
+\subsection{Summary}
+
+Executing the \bine{} allgather on the \pat{} machinery removes the dependence of the transfers on the data layout: the four strategies issue the same messages, and block-by-block, the simplest, is the best one.
+It does not make the allgather faster.
+\bine{}-\pat{} is up to $12\,\%$ faster than the butterfly kernels on $4$ and, at some sizes, $8$ ranks, but from $16$ ranks on it is $3$--$14\,\%$ slower for large blocks and up to $2.2\times$ slower for small ones, where its latency grows linearly with $p$: the aggregation reduces the network messages to $s$ per channel, but each piece is still an operation on the device, executed in order by a single group of workers.
+With one rank per node the native \pat{} is $1.14$--$1.47\times$ faster than \bine{}-\pat{} up to 16\,kB, with the same machinery, which points to the two features that \bine{}-\pat{} lacks, a parallel factor larger than one and a fused receive-and-forward, as the natural next steps; for large blocks the two are within $8\,\%$, with \bine{}-\pat{} slightly ahead on $16$ ranks.
+The measurements also explain the slowdown of double send in both implementations: the distance-halving schedule sends its largest windows to the farthest partners, which are on other nodes, and moves $2$--$2.6\times$ as much data over the network as the distance-doubling one; with one rank per node, where all partners are on other nodes, the slowdown disappears.

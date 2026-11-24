@@ -99,42 +99,44 @@
   \end{tikzpicture}%
 }
 
-% \xf{from}{to}{style}{step}: transfer drawn as an arc below the ranks
-\newcommand{\xf}[4]{%
-  \draw[#3] (#1.south) to[out=-90, in=-90, looseness=1.1]
-       node[st, pos=0.5] {#4} (#2.south);}
-
-% \fattree{transfers}: 8 ranks, 4 leaf switches, 1 spine
-\newcommand{\fattree}[1]{%
-  \begin{tikzpicture}[x=1.25cm, y=1cm,
-      rank/.style={circle, draw, minimum size=0.65cm, inner sep=0pt,
-                   fill=white, font=\footnotesize},
-      sw/.style={rectangle, rounded corners=2pt, draw=black!70, fill=black!8,
-                 minimum width=1.6cm, minimum height=0.5cm, inner sep=0pt,
-                 font=\scriptsize},
-      wire/.style={draw=black!40, line width=0.8pt},
-      uplink/.style={draw=black!35, line width=2pt},
-      xfer/.style={-{Stealth[length=2.2mm]}, shorten >=1pt},
-      local/.style={xfer, localxfer, line width=1.6pt},
-      cross/.style={xfer, crosslink, line width=1.6pt},
-      st/.style={circle, fill=white, inner sep=1pt, font=\scriptsize\bfseries}]
-    % ranks
-    \foreach \i in {0,...,7} \node[rank] (r\i) at (\i,0) {\i};
-    % leaf switches
-    \foreach \j in {0,...,3} {
-      \pgfmathtruncatemacro{\a}{2*\j}
-      \pgfmathtruncatemacro{\b}{2*\j+1}
-      \node[sw] (l\j) at (2*\j+0.5,1.4) {leaf};
-      \draw[wire] (r\a) -- (l\j);
-      \draw[wire] (r\b) -- (l\j);
-    }
-    % spine and uplinks
-    \node[sw, minimum width=2.6cm] (sp) at (3.5,2.9) {spine};
+% \ftstep{holders}{transfers a/b}{uplink loads j/label}: one step of a broadcast on
+% 8 ranks, 4 leaf switches and 1 spine (2:1 oversubscribed fat tree). Each transfer is
+% drawn along the links it uses: green if it stays under one leaf switch, red if it
+% crosses the uplinks. Ranks in {holders} already have the data; the load of each used
+% uplink is written next to it.
+\newcommand{\ftstep}[3]{%
+  \begin{tikzpicture}[x=0.56cm, y=0.66cm,
+      rank/.style={circle, draw, minimum size=0.4cm, inner sep=0pt,
+                   fill=white, font=\scriptsize},
+      sw/.style={rectangle, rounded corners=1.5pt, draw=black!60, fill=black!8,
+                 minimum width=0.62cm, minimum height=0.3cm, inner sep=0pt},
+      wire/.style={draw=black!25, line width=0.6pt},
+      uplink/.style={draw=black!25, line width=1.6pt},
+      path/.style={line width=1.5pt, line join=round, line cap=round},
+      load/.style={font=\scriptsize\bfseries, crosslink, inner sep=1pt, fill=white}]
+    \foreach \i in {0,...,7} \coordinate (r\i) at (\i,0);
+    \foreach \j in {0,...,3} \coordinate (l\j) at (2*\j+0.5,1.6);
+    \coordinate (sp) at (3.5,3.3);
+    % idle links
+    \foreach \i in {0,...,7} {\pgfmathtruncatemacro{\j}{\i/2}\draw[wire] (r\i) -- (l\j);}
     \foreach \j in {0,...,3} \draw[uplink] (l\j) -- (sp);
-    % reserve space below the ranks for the arcs
-    \path (0,-2.5);
-    % transfers
-    #1
+    % transfers, drawn along the links they use
+    \foreach \a/\b in {#2} {
+      \pgfmathtruncatemacro{\ja}{\a/2}
+      \pgfmathtruncatemacro{\jb}{\b/2}
+      \ifnum\ja=\jb
+        \draw[path, localxfer, -{Stealth[length=1.8mm]}] (r\a) -- (l\ja) -- ([yshift=0.2cm]r\b);
+      \else
+        \draw[path, crosslink, -{Stealth[length=1.8mm]}] (r\a) -- (l\ja) -- (sp) -- (l\jb) -- ([yshift=0.2cm]r\b);
+      \fi
+    }
+    % switches and ranks on top of the paths
+    \foreach \j in {0,...,3} \node[sw] at (l\j) {};
+    \node[sw, minimum width=1.2cm] at (sp) {};
+    \foreach \i in {0,...,7} \node[rank] at (r\i) {\i};
+    \foreach \h in {#1} \node[rank, fill=black!20] at (r\h) {\h};
+    % uplink loads
+    \foreach \j/\lab in {#3} \node[load] at ($(l\j)!0.42!(sp)$) {\lab};
   \end{tikzpicture}%
 }
 

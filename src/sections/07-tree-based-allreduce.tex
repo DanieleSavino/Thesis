@@ -61,8 +61,8 @@ The composition is not one of the two allreduce algorithms of the Bine paper, wh
   \label{fig:tar-tree}
 \end{figure}
 \paragraph{Cost.}
-The tree has $s=\log_2p$ levels and the same cost model as the binomial tree (\cref{sec:bg-bine}).
-In \nccl{} the vector is pipelined in chunks along the tree, as in \cref{sec:bg-double-tree}, but the Bine tree is a binomial tree and not a binary one: the root has $s$ children and sends each chunk $s$ times, so the bandwidth term of a channel remains $\bigO{s\,n\beta}$ (\cref{sec:tree-collectives}).
+The tree has $s=\log_2p$ levels, the same shape as the binomial tree of \cref{sec:bg-bine}, but not the same cost model: \nccl{} pipelines the vector in chunks along the tree, as in \cref{sec:bg-double-tree}, so the latency term is not the $2s\,\alpha$ of the non-pipelined binomial tree of \cref{tab:bg-allreduce-cost}.
+Since the Bine tree is a binomial tree and not a binary one, the root has $s$ children and sends each chunk $s$ times, so the bandwidth term of a channel remains $\bigO{s\,n\beta}$ (\cref{sec:tree-collectives}).
 The number of children of the other ranks is smaller: $u(r)-1$ for rank $r$ (\cref{sec:tree-collectives}).
 To avoid that the same rank has the largest fan-out in all the channels, the root of the tree is not fixed but depends on the channel (\cref{sec:tar-schedule}).
 The combination of two complementary Bine trees, as in the double binary tree of \cref{sec:bg-double-tree}, is left as future work.
@@ -281,7 +281,8 @@ For larger vectors the double binary tree and the ring of \nccl{} take over, as 
 \end{figure}
 \paragraph{Simple protocol.}
 With \texttt{Simple}, the Bine tree is the fastest of the four algorithms in $26$ of the $36$ points (\cref{fig:tar-heatmap-simple}): all the points up to $1$\,MB but one ($256$\,kB on $128$ ranks, where the \nccl{} tree is $6\,\%$ faster), and $4$\,MB from $32$ ranks on; the ring and the \nccl{} tree are the fastest only at $4$ and $64$\,MB.
-Up to $1$\,MB the Bine tree and the \nccl{} tree have the same communication structure, a pipelined tree with the whole slice on every edge, and the Bine tree is faster in almost all the points: $29$ out of $36$ points are faster than the \nccl{} tree in the median.
+Up to $1$\,MB the Bine tree and the \nccl{} tree move the data the same way, a pipelined tree with the whole slice on every edge, even though the two trees differ in shape: the \nccl{} tree is a double binary tree, while the Bine tree allreduce of this chapter is a single binomial tree whose root changes with the channel, with exactly $\min(p,\mathit{nchannels})$ distinct roots across the channels (\cref{sec:tar-schedule}).
+The Bine tree is faster in almost all the points: $29$ out of $36$ points are faster than the \nccl{} tree in the median.
 The gain is consistent across scales: on average $15\,\%$ for $1$\,kB, $5\,\%$ for $16$\,kB and $2\,\%$ for $256$\,kB, and it becomes sizeable for $1$\,MB and $4$\,MB ($26\,\%$ and $22\,\%$ on average, up to $1.5\times$ at $1$\,MB on $16$ ranks).
 The improvement over the ring is larger still for small vectors, because the latency of the ring is linear in $p$: for $1$\,kB the Bine tree is $1.8\times$ faster than the ring on $8$ ranks and $8.4\times$ faster on $128$ ranks.
 At $4$\,MB the Bine tree is the fastest algorithm from $32$ ranks on, and the ring remains ahead on $4$ to $16$ ranks, by $14$ to $22\,\%$.

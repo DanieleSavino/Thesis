@@ -27,16 +27,23 @@ The kernel for a given collective is selected through a function identifier (\te
 
 At initialisation \nccl{} builds a model of the machine: GPUs, CPUs, PCIe switches, NVLink and NVSwitch connections, and network interfaces, each link with a type and a bandwidth.
 From it, it computes the paths between every pair of devices and then searches, for each family of algorithms, a \emph{graph} (\texttt{ncclTopoGraph}) that describes how the ranks should be connected to obtain a high bandwidth on this specific machine.
+The search itself (\texttt{ncclTopoSearchRec}) is a single bandwidth-greedy backtracking search, shared by every pattern and only parametrised by it, not a different named algorithm per pattern: it tries orderings and connections of the GPUs, keeps the one that uses the most bandwidth within a time budget, and backs off the constraints (same channels, link type, cross-NIC use) when no solution is found.
 The search produces, for every pattern, a number of \emph{channels} and, for every channel, an ordering of the GPUs inside the node and the network interface used to enter and leave the node.
 
 Two graphs are of interest in this thesis.
 \begin{itemize}
   \item The \emph{ring graph}: each channel is a ring that visits all the ranks; inside a node the order of the GPUs follows the fastest links, and between nodes the ring leaves from and enters into the GPUs closest to a network interface.
-  \item The \emph{tree graph}: inside a node the GPUs are connected in a chain, and the nodes are connected to each other with a double binary tree, in which every node is a leaf in one of the two trees and an internal node in the other, so that the load on the links is balanced (see~\cite{hu2025demystifying} and Sec.~\ref{sec:nccl-tree}).
+  For a fixed set of channels, finding this ordering is finding the cycle through all the ranks that makes the best use of the links, a problem in the same family as the travelling salesman problem; \nccl{} does not solve it with a dedicated TSP algorithm, but with the same backtracking search above, run with the ring pattern.
+  \item The \emph{tree graph}: inside a node the GPUs are connected in a chain, and the nodes are connected to each other with a double binary tree, in which every node is a leaf in one of the two trees and an internal node in the other.
+  The two trees are not searched independently: the search (pattern \texttt{BALANCED\_TREE}) books only half of the inter-node bandwidth at the two GPUs that enter and leave the node, since the mirrored second tree will carry the other half there, and the second tree itself is obtained from the first by a fixed, topology-independent rule, mirroring the rank identifiers when their number is even and shifting them by one position when it is odd (see~\cite{hu2025demystifying} and Sec.~\ref{sec:bg-double-tree}); this combination, not a separate balancing step, is what keeps the load on the links even between the two trees (Sec.~\ref{sec:nccl-tree}).
 \end{itemize}
 The results of the search are stored in the per-channel structures \texttt{ncclRing} and \texttt{ncclTree}, which record for each rank its predecessor and successor in the ring, and its parent and children in the tree.
 These are the peers that the kernels read to know whom to send to and receive from.
-The Bine algorithms do not use these graphs: their peers are computed from the rank numbers alone (Chapters~\ref{ch:tree} and~\ref{ch:butterfly}), independently of the topology.
+
+The \bine{} algorithms do not search a graph of their own: among the alternatives tried, the default ring graph proved more consistent across topologies and allocations, so \bine{} reuses it instead.
+A graph's role, for any pattern, is to permute the ranks, deciding which physical GPU plays which position, and to derive other topology-dependent quantities from that, such as the number of channels and the bandwidth and latency estimates of \cref{sec:nccl-overview}.
+\bine{} reads \texttt{comm->graphs[NCCL\_ALGO\_RING]} for both: its schedule (Chapters~\ref{ch:tree} and~\ref{ch:butterfly}) is still just rank arithmetic, XOR and negabinary masks, with no notion of link types or bandwidth, but it is applied to the positions of the ring's permutation, not to the raw ranks of the communicator.
+This is not a design choice made for \bine{}: the ring permutation happens to work well for it because it minimises the hop-to-hop distance around the whole cycle, wrap-around edge from the last rank to the first included, which is close to minimising the modular distance that the \bine{} tree and butterfly are built to minimise (Sec.~\ref{sec:bg-bine}), even though the search that produces it knows nothing about \bine{}'s actual pattern of edges.
 
 \section{Channels}\label{sec:nccl-channels}
 

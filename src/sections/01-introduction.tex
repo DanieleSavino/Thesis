@@ -1,0 +1,245 @@
+% Requires: tikz (arrows.meta, positioning, calc, fit, backgrounds), subcaption
+\chapter{Introduction}\label{ch:intro}
+
+%==============================================================================
+\section{Collective communication on multi-GPU systems}\label{sec:intro-motivation}
+
+A \emph{collective operation} involves every process of a group: a broadcast sends one buffer to all of them, a reduce combines one buffer per process into a single result, an allreduce does the same and gives the result to everyone.
+These few operations carry most of the communication of distributed deep learning and of a large part of scientific computing: synchronising the gradients of a data-parallel training step is an allreduce, re-sharding the weights of a model-parallel one is an allgather or a reduce-scatter, and the same patterns appear in solvers and in collective I/O.
+They are also the point where a machine stops looking like a pool of accelerators and starts looking like a network.
+
+The machines this thesis targets are GPU clusters of the shape of \cref{fig:intro-system}: a few GPUs per node, connected to each other by NVLink, and the nodes connected by a network that is both slower per link and shared between all the nodes of the job.
+The two levels are not close to each other in bandwidth.
+Inside a node, NVLink and NVSwitch give each GPU hundreds of gigabytes per second towards every other GPU of the node.
+Between nodes, a few network interfaces per node offer an order of magnitude less, and the links above the leaf switches are usually \emph{oversubscribed}: the aggregate bandwidth of the uplinks is a fraction of the bandwidth of the ports below them, so transfers belonging to different pairs of nodes contend for the same cables.
+Both supercomputers used in this thesis have this shape, with four NVIDIA A100 GPUs per node.
+
+\begin{figure}[t]
+  \centering
+  \begin{tikzpicture}[
+      gpu/.style={circle, draw, minimum size=7.5mm, inner sep=0pt, font=\scriptsize,
+                  fill=white},
+      nic/.style={rectangle, rounded corners=1pt, draw, minimum width=7mm,
+                  minimum height=4.5mm, inner sep=1pt, font=\scriptsize, fill=white},
+      sw/.style={rectangle, rounded corners=2pt, draw=black!70, fill=black!8,
+                 minimum width=2.6cm, minimum height=6mm, font=\scriptsize},
+      nvsw/.style={rectangle, rounded corners=2pt, draw=localxfer!80,
+                   fill=localxfer!10, minimum width=2.4cm, minimum height=5mm,
+                   font=\scriptsize},
+      nodebox/.style={rectangle, rounded corners=3pt, draw=black!55, dashed,
+                      inner sep=5pt},
+      fast/.style={localxfer, line width=2.2pt},
+      slow/.style={crosslink, line width=1pt},
+      lab/.style={font=\scriptsize, align=center}]
+
+    % --- node 0 ---------------------------------------------------------
+    \foreach \i/\x in {0/0, 1/1.1, 2/2.2, 3/3.3} \node[gpu] (a\i) at (\x,0) {G\i};
+    \node[nic] (na) at (4.6,0) {NIC};
+    \node[nvsw] (nvA) at (1.65,-1.15) {NVSwitch};
+    \foreach \i in {0,...,3} \draw[fast] (a\i) -- (nvA);
+    \draw[slow] (a3) -- (na);
+    \node[nodebox, fit=(a0)(a3)(na)(nvA), label={[font=\scriptsize]above:Node 0}] (box0) {};
+
+    % --- node 1 ---------------------------------------------------------
+    \begin{scope}[xshift=7.1cm]
+      \foreach \i/\x in {4/0, 5/1.1, 6/2.2, 7/3.3} \node[gpu] (b\i) at (\x,0) {G\i};
+      \node[nic] (nb) at (4.6,0) {NIC};
+      \node[nvsw] (nvB) at (1.65,-1.15) {NVSwitch};
+      \foreach \i in {4,...,7} \draw[fast] (b\i) -- (nvB);
+      \draw[slow] (b7) -- (nb);
+      \node[nodebox, fit=(b4)(b7)(nb)(nvB), label={[font=\scriptsize]above:Node 1}] (box1) {};
+    \end{scope}
+
+    \node[lab, localxfer, below=2pt of box0] {NVLink: fast,\\private to the node};
+    \node[lab, localxfer, below=2pt of box1] {NVLink: fast,\\private to the node};
+
+    % --- network --------------------------------------------------------
+    \node[sw] (leaf) at (8.15,2.1) {leaf switch};
+    \node[sw, minimum width=1.8cm] (spine) at (8.15,3.4) {spine};
+    \draw[slow] (na.north) -- (leaf.south west);
+    \draw[slow] (nb.north) -- (leaf.south east);
+    \draw[slow] (leaf) -- node[lab, right=1pt, crosslink] {oversubscribed} (spine);
+    \draw[slow] (spine.north) -- ++(0,0.4) node[lab, above] {to the other nodes};
+    \node[lab, crosslink, anchor=east] at (5.6,2.1)
+      {inter-node network: slow,\\shared with the other nodes};
+  \end{tikzpicture}
+  \caption{The shape of the machines considered in this thesis: a few GPUs per node on a
+           fast intra-node interconnect (green), and nodes joined by a slower, shared and
+           usually oversubscribed network (red). A collective algorithm is fast or slow
+           depending mostly on how much of its traffic it puts on the red links.}
+  \label{fig:intro-system}
+\end{figure}
+
+The consequence is that the classical way of comparing collective algorithms, counting communication steps and bytes sent in a model where every pair of ranks is equally distant (\cref{sec:bg-collectives}), no longer predicts which algorithm is faster.
+Two algorithms with the same number of steps and the same total volume of data can put very different amounts of traffic on the red links of \cref{fig:intro-system}, and it is that traffic, not the step count, that decides the running time once the job spans more than a handful of nodes.
+What an algorithm should do, then, is not only finish in few steps, but also choose \emph{who talks to whom} so that as much of the exchange as possible stays inside a node, or at least inside a leaf switch.
+
+%==============================================================================
+\section{Bine trees}\label{sec:intro-bine}
+
+\bine{} (binomial negabinary) trees are a recently proposed family of collective algorithms built exactly around that observation~\cite{desensi2025bine}.
+They keep everything that makes binomial trees and butterflies attractive, the logarithmic number of steps, one message sent and one received per rank per step, a schedule computed from the rank identifiers alone with no knowledge of the topology, and change only the choice of the partner at each step, so that the ranks that communicate are as close as possible in the rank space.
+Closeness is measured as \emph{modular distance}, the distance between two ranks on a circle of $p$ positions, which is a better proxy for physical distance than the plain difference of the identifiers when a job spans several groups of nodes (\cref{sec:bg-bine}).
+The partners are derived from the \emph{negabinary} (base $-2$) representation of the rank, which is where the name comes from, and both the tree variant and the butterfly variant of the construction can be computed with a handful of bit operations.
+
+\Cref{fig:intro-distance} shows the idea for a broadcast over $p=8$ ranks.
+The standard distance-halving binomial tree sends across half the circle first, then across a quarter, then to the neighbour: the distances of the partners are $4,2,1$ and the edges of the tree span $12$ positions in total.
+The \bine{} tree, rooted at the same rank and with the same three steps and the same seven messages, uses distances $3,1,1$ and spans $9$ positions.
+The last step, which is also the step with the most transfers, is entirely between neighbours.
+On a real network this difference is what turns into traffic that does not leave a node, or does not climb to a spine switch: on several supercomputer topologies the original work measures up to a third less traffic on the slow links than the equivalent standard algorithms~\cite{desensi2025bine}.
+
+\begin{figure}[t]
+  \centering
+  \tikzset{
+    rk/.style={circle, draw, minimum size=6.5mm, inner sep=0pt, font=\small},
+    far/.style={crosslink, line width=1.4pt, -{Stealth[length=2mm]}},
+    near/.style={localxfer, line width=1.4pt, -{Stealth[length=2mm]}},
+    dlab/.style={font=\scriptsize, fill=white, inner sep=0.8pt},
+  }
+  \begin{subfigure}[t]{0.47\linewidth}
+    \centering
+    \begin{tikzpicture}[scale=1.05]
+      \foreach \r in {0,...,7}{ \node[rk] (b\r) at ({90-45*\r}:1.8) {\r}; }
+      \draw[far]  (b0) -- node[dlab] {4} (b4);
+      \draw[far]  (b0) -- node[dlab] {2} (b2);
+      \draw[far]  (b4) -- node[dlab] {2} (b6);
+      \draw[near] (b0) -- node[dlab] {1} (b1);
+      \draw[near] (b2) -- node[dlab] {1} (b3);
+      \draw[near] (b4) -- node[dlab] {1} (b5);
+      \draw[near] (b6) -- node[dlab] {1} (b7);
+    \end{tikzpicture}
+    \caption{Binomial tree: distances $4,2,2,1,1,1,1$, total $12$.}
+    \label{fig:intro-distance-binomial}
+  \end{subfigure}\hfill
+  \begin{subfigure}[t]{0.47\linewidth}
+    \centering
+    \begin{tikzpicture}[scale=1.05]
+      \foreach \r in {0,...,7}{ \node[rk] (n\r) at ({90-45*\r}:1.8) {\r}; }
+      \draw[far]  (n0) -- node[dlab] {3} (n3);
+      \draw[near] (n0) -- node[dlab] {1} (n7);
+      \draw[near] (n3) -- node[dlab] {1} (n4);
+      \draw[near] (n0) -- node[dlab] {1} (n1);
+      \draw[near] (n3) -- node[dlab] {1} (n2);
+      \draw[near] (n7) -- node[dlab] {1} (n6);
+      \draw[near] (n4) -- node[dlab] {1} (n5);
+    \end{tikzpicture}
+    \caption{\bine{} tree: distances $3,1,1,1,1,1,1$, total $9$.}
+    \label{fig:intro-distance-bine}
+  \end{subfigure}
+  \caption{Broadcast from rank $0$ over $p=8$ ranks placed on a circle, with the standard
+           distance-halving binomial tree and the \bine{} tree. Each edge is labelled with
+           the modular distance between its endpoints, and is green when the two ranks are
+           neighbours and red when they are not. The two schedules have the same number of
+           steps and move the same number of bytes, but \bine{} keeps its partners closer:
+           it has one distant edge instead of three, and its busiest step, the last one, is
+           entirely between neighbours. The construction is described in \cref{sec:bg-bine}.}
+  \label{fig:intro-distance}
+\end{figure}
+
+The original \bine{} algorithms were implemented and evaluated at the MPI level, on CPU clusters~\cite{desensi2025bine}.
+That leaves open the question this thesis is about: whether the same locality argument still holds where most of the collective traffic of a GPU cluster is actually generated, that is, inside \nccl{}.
+
+%==============================================================================
+\section{Challenges}\label{sec:intro-challenges}
+
+\nccl{}, the NVIDIA Collective Communications Library~\cite{nccl}, is the library that PyTorch, TensorFlow, JAX and essentially every multi-GPU deep learning framework call for their collectives on NVIDIA GPUs.
+Its execution model differs from that of an MPI library, so an algorithm defined at the MPI level has to be reorganised around it rather than transcribed.
+Three of its design choices shape every chapter of this thesis.
+
+\begin{description}
+  \item[The collective runs on the GPU.] A collective in \nccl{} is a CUDA kernel.
+    The ranks do not call \texttt{send} and \texttt{recv}: a thread block per \emph{channel} walks the schedule by calling the device-side \texttt{Primitives} abstraction, which moves data between buffers and across the network through a protocol chosen by the host (\cref{sec:nccl-device}).
+    An algorithm therefore has to be expressed as a sequence of primitive calls with the correct peer, offset and size on every rank, and its cost includes the cost of those calls, not only of the bytes.
+  \item[The work is partitioned before the kernel starts.] \nccl{} splits the buffer across channels once, with a fixed partition computed on the host (\cref{sec:nccl-cbd}).
+    This fits the ring and the tree, where every rank handles the same amount of data at every step, and fits badly an algorithm like the \bine{} butterfly, whose window of active ranks, and hence the set of blocks a rank owns, doubles or halves at every step (\cref{sec:bfly-pos}).
+    The data a channel has to send stops being contiguous, and the handling of that non-contiguity is the main design problem of \cref{ch:butterfly}.
+  \item[There is machinery worth reusing.] \nccl{} also brings its own answers to some of these problems, in particular \pat{} (\cref{sec:nccl-pat}), a device-side mechanism that aggregates many small transfers into fewer, larger messages for the allgather and the reduce-scatter.
+    A \bine{} schedule can be expressed on top of it instead of on raw primitives, which is what \cref{ch:pat} does.
+\end{description}
+
+Finally, \nccl{} is the baseline as well as the host: its ring, its double binary tree and its \pat{} algorithms are tuned for these machines, and they are what the \bine{} kernels of this thesis are compared against on equal terms, under the same protocols, on the same allocations.
+
+%==============================================================================
+\section{Contributions}\label{sec:intro-contributions}
+
+This thesis brings the \bine{} algorithms inside \nccl{} and measures where their locality pays for itself.
+The implementation has four components, summarised in \cref{fig:intro-roadmap}.
+
+\begin{description}
+  \item[A tree-based broadcast and reduce (\cref{ch:tree}).]
+    The \bine{} tree of \cref{sec:bg-bine} is implemented as a new \nccl{} algorithm, with the schedule computed on the device from the rank identifiers and the levels of the tree walked one child at a time.
+  \item[A butterfly allgather and reduce-scatter (\cref{ch:butterfly}).]
+    The \bine{} butterfly of \cref{sec:bg-bine-butterfly} is implemented for the two collectives whose window grows and shrinks at every step.
+    Four buffer-management strategies, block-by-block, send, permute and double send, are developed for the non-contiguous data that the fixed partition of \nccl{} imposes on such a schedule, and compared against each other.
+  \item[The same allgather rebuilt on \pat{} (\cref{ch:pat}).]
+    The butterfly allgather is implemented a second time on \nccl{}'s own \pat{} machinery, which aggregates the transfers of several steps, to see whether the dependence of the strategies on the data layout can be removed by the kernel rather than by the partition.
+  \item[A tree-based allreduce (\cref{ch:treeallreduce}).]
+    A composition that is not described in the original \bine{} paper but maps well onto the channel system of \nccl{}: a \bine{} tree rooted differently on each channel, one root per channel instead of one per rank, executing the reduce and the broadcast as a single fused kernel following the structure of \nccl{}'s own tree allreduce.
+\end{description}
+
+Each component is evaluated on two supercomputers, MeluXina and Leonardo~\cite{turisini2024leonardo}, against the native \nccl{} ring, tree and \pat{} algorithms, under the \texttt{SIMPLE} and \texttt{LL} protocols, from $4$ to $128$ ranks and from 1\,kB to 64\,MB.
+The tooling written to make those measurements reproducible, a benchmark driver, a schedule simulator, a job launcher and a unit-test harness for the kernels, is a contribution in its own right and is described in \cref{ch:software}.
+
+\begin{figure}[t]
+  \centering
+  \begin{tikzpicture}[
+      src/.style={rectangle, rounded corners=2pt, draw=black!70, fill=black!8,
+                  text width=2.9cm, align=center, font=\footnotesize, inner sep=4pt},
+      comp/.style={rectangle, rounded corners=2pt, draw=black!70, fill=white,
+                   text width=2.5cm, minimum height=1.2cm, align=center,
+                   font=\footnotesize, inner sep=4pt},
+      base/.style={rectangle, rounded corners=2pt, draw=black!55, dashed,
+                   text width=11cm, align=center, font=\footnotesize, inner sep=5pt},
+      ar/.style={-{Stealth[length=2mm]}, draw=black!70}]
+
+    % the two schedules of the background chapter
+    \node[src] (tree) at (-3.35,0) {\bine{} tree\\(\cref{sec:bg-bine})};
+    \node[src] (bfly) at (3.35,0)  {\bine{} butterfly\\(\cref{sec:bg-bine-butterfly})};
+
+    % the four components
+    \node[comp] (c1) at (-5.0,-2.0)  {Broadcast, reduce\\\cref{ch:tree}};
+    \node[comp] (c4) at (-1.67,-2.0) {Fused tree allreduce\\\cref{ch:treeallreduce}};
+    \node[comp] (c2) at (1.67,-2.0)  {Allgather, reduce-scatter\\\cref{ch:butterfly}};
+    \node[comp] (c3) at (5.0,-2.0)   {Allgather on \pat{}\\\cref{ch:pat}};
+
+    \draw[ar] (tree) -- (c1);
+    \draw[ar] (tree) -- (c4);
+    \draw[ar] (bfly) -- (c2);
+    \draw[ar] (bfly) -- (c3);
+    \draw[ar, dashed] (c2) -- (c3);
+
+    % evaluation
+    \node[base] (ev) at (0,-4.0) {Evaluation against the \nccl{} ring, tree and \pat{}\\
+      MeluXina and Leonardo, $4$--$128$ ranks, 1\,kB--64\,MB\\
+      with the benchmarks, simulator, launcher and tests of \cref{ch:software}};
+    \foreach \c in {c1,c4,c2,c3} \draw[ar] (\c) -- (\c |- ev.north);
+  \end{tikzpicture}
+  \caption{The four components implemented in this thesis and the chapters that describe
+           them. The two \bine{} schedules of \cref{ch:background} are each used in two
+           ways; the dashed arrow is the same butterfly allgather, with its four
+           buffer-management strategies, rebuilt on \nccl{}'s \pat{} machinery.}
+  \label{fig:intro-roadmap}
+\end{figure}
+
+%==============================================================================
+\section{Results at a glance}\label{sec:intro-results}
+
+The measurements give a consistent, and partly negative, picture, which is what makes it useful: the locality of \bine{} pays where the collective is latency-bound and the step count and the partner distance dominate, and does not pay where \nccl{}'s own algorithms are bandwidth-optimal.
+
+\begin{description}
+  \item[Broadcast and reduce.] The \bine{} tree beats the ring over almost the whole range of message sizes once there are enough ranks: at $p=128$ it is $3.4$--$6.5\times$ faster from 1\,kB to 4\,MB, and loses only at the largest size tested, 64\,MB, where the operation becomes bandwidth-bound and the pipelining of the ring is optimal (\cref{sec:tree-results}).
+  \item[Allreduce.] The tree-based allreduce is the fastest algorithm overall for small and medium vectors from a moderate number of ranks on, it matches or beats the native \nccl{} tree up to 1\,MB on almost every scale, and it is $1.3$--$3.4\times$ faster at 1\,MB than the butterfly allreduce obtained as a reduce-scatter followed by an allgather (\cref{sec:tar-results}).
+  \item[Allgather and reduce-scatter.] The butterfly pays off where a channel owns whole blocks and a window can be moved as one contiguous transfer, and degrades once the partition of \nccl{} cuts the window into slices, which is where every size above a few hundred kB falls (\cref{sec:bfly-results}).
+  \item[\pat{}.] Rebuilding the allgather on \pat{} removes the dependence of the four strategies on the data layout, but does not make the collective faster when several GPUs share a node. \nccl{}'s own \pat{} allgather is implemented only for one GPU per node, and in that configuration the two are competitive, with \bine{}-\pat{} ahead for blocks of 1\,MB and more (\cref{sec:pat-exp}).
+\end{description}
+
+Taken together, the results give a precise account of where, inside \nccl{}, the locality of \bine{} pays for itself, and where \nccl{}'s own bandwidth-oriented algorithms remain the better choice.
+\Cref{ch:conclusion} collects the limits that each component still has and the directions that follow from them.
+
+%==============================================================================
+\section{Outline}\label{sec:intro-outline}
+
+\Cref{ch:background} introduces the collectives, the cost model and the notation used throughout, the ring, the binomial and double binary trees and the butterfly that serve as baselines, and the \bine{} tree and butterfly that are implemented in the rest of the thesis.
+\Cref{ch:nccl} follows a collective through \nccl{}, from the moment it is issued to the moment the data moves: the topology graph, the channels, the transports and protocols, the partition of the work across channels, the device-side primitives, and the two existing algorithms that the implementation chapters build on, the tree and \pat{}.
+\Cref{ch:tree,ch:butterfly,ch:pat,ch:treeallreduce} describe the four components, each with its schedule, its kernel, its testing and its experimental results.
+\Cref{ch:software} describes the tools developed to run and verify those experiments, and \cref{ch:conclusion} summarises what was learnt and what is left for future work.

@@ -44,6 +44,7 @@ The amount of data per edge is fixed, so the partition of \nccl{} fits without c
 An allreduce built as a reduce followed by a broadcast inherits this property.
 The structure is shown in \cref{fig:tar-tree}: the reduce and the broadcast use the same edges, in opposite directions.
 The composition is not one of the two allreduce algorithms of the Bine paper, which are based on the butterfly (Sec.~4.4 of~\cite{desensi2025bine}); it combines the reduce and the broadcast for small vectors that the paper defines on the distance-halving Bine tree (Sec.~4.5 of~\cite{desensi2025bine}), and the allreduce as a reduce followed by a broadcast is the one of \cref{sec:bg-collectives}.
+Rooting that same pattern differently on each channel, rather than once for the whole communicator, is what maps it onto \nccl{}: the result is one root per channel instead of one per rank, at most $\min(p,\mathit{nchannels})$ of them, not a new algorithm.
 \begin{figure}[t]
   \centering
   \binepic{reduce (leaves first)}{%

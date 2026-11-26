@@ -1,6 +1,6 @@
 \chapter{Conclusion}\label{ch:conclusion}
 
-This thesis implemented the \bine{} algorithms~\cite{desensi2025bine} inside \nccl{}, as four pieces: a tree-based broadcast and reduce (\cref{ch:tree}), a butterfly allgather and reduce-scatter (\cref{ch:butterfly}), the same allgather rebuilt on the \pat{} machinery (\cref{ch:pat}), and a tree-based allreduce that composes the first piece into a single fused kernel (\cref{ch:treeallreduce}).
+This thesis implemented the \bine{} algorithms~\cite{desensi2025bine} inside \nccl{}, as four components: a tree-based broadcast and reduce (\cref{ch:tree}), a butterfly allgather and reduce-scatter (\cref{ch:butterfly}), the same allgather rebuilt on the \pat{} machinery (\cref{ch:pat}), and a tree-based allreduce that composes the same Bine tree into a single fused reduce-and-broadcast kernel (\cref{ch:treeallreduce}).
 Across the four, the experiments of \cref{sec:tree-results,sec:bfly-results,sec:pat-exp,sec:tar-results} draw a consistent picture of where the \bine{} structure pays for itself inside \nccl{} and where it does not.
 
 \paragraph{Broadcast and reduce.}
@@ -18,8 +18,8 @@ For blocks of $1$\,MB or more, instead, \bine{}-\pat{} is already $5$--$8\,\%$ \
 
 \paragraph{Allreduce.}
 The tree-based allreduce of \cref{ch:treeallreduce} roots a \bine{} tree differently on each channel and runs it as a single fused reduce-and-broadcast kernel.
-The idea does not come from the reduce-scatter-plus-allgather composition of \cref{ch:butterfly}, whose windows halve and double at every step, but from the other allreduce of the \bine{} paper, the recursive doubling that exchanges the whole vector at every step with no such growth (Sec.~4.5 of~\cite{desensi2025bine}, \cref{sec:tar-motivation}): the multi-root tree can be read as that same pattern chopped down to $\min(p,\mathit{nchannels})$ simultaneous instances, one per channel, to match the number of channels \nccl{} actually runs, instead of one per rank (\cref{sec:tar-schedule}).
-Of the four pieces, it has the best range: against the reduce-scatter-plus-allgather allreduce of the \bine{} butterfly, which does grow and shrink its windows, the tree is still the fastest algorithm at $1$\,MB on every scale and at $4$\,MB from $32$ ranks on, and the gap is largest exactly there: the butterfly allreduce is $1.3$--$3.4\times$ slower at $1$\,MB and $1.6$--$2.5\times$ slower at $4$\,MB, growing with the number of ranks (\cref{fig:tar-heatmap-simple}).
+The idea does not come from the reduce-scatter-plus-allgather composition of \cref{ch:butterfly}, whose windows halve and double at every step, but from the other allreduce of the \bine{} paper, the recursive doubling that exchanges the whole vector at every step with no such growth (Sec.~4.5 of~\cite{desensi2025bine}, \cref{sec:tar-motivation}): the multi-root tree can be read as that same pattern restricted to $\min(p,\mathit{nchannels})$ simultaneous instances, one per channel, to match the number of channels \nccl{} actually runs, instead of one per rank (\cref{sec:tar-schedule}).
+Of the four components, it has the best range: against the reduce-scatter-plus-allgather allreduce of the \bine{} butterfly, which does grow and shrink its windows, the tree is still the fastest algorithm at $1$\,MB on every scale and at $4$\,MB from $32$ ranks on, and the gap is largest exactly there: the butterfly allreduce is $1.3$--$3.4\times$ slower at $1$\,MB and $1.6$--$2.5\times$ slower at $4$\,MB, growing with the number of ranks (\cref{fig:tar-heatmap-simple}).
 It also matches or beats the native \nccl{} tree up to $1$\,MB on almost every scale (\cref{sec:tar-results}).
 
 \section{Future work}

@@ -1,3 +1,17 @@
 \begin{abstract}
-\todo{Abstract}
+The cost of a collective operation on a multi-GPU system is increasingly set not by the number of communication steps but by how much traffic crosses the slow, oversubscribed links between nodes.
+\bine{} (binomial negabinary) trees are a recently proposed family of collective algorithms that keep the logarithmic step count of binomial trees and butterflies while choosing partners that minimise this distance, cutting the traffic on the slow links by up to a third on several supercomputer networks~\cite{desensi2025bine}.
+The original algorithms were implemented and evaluated only at the MPI level, on CPU clusters; this thesis brings them inside \nccl{}, the library most multi-GPU deep learning frameworks rely on for collective communication on NVIDIA GPUs.
+
+The implementation has four components.
+A tree-based broadcast and reduce replace \nccl{}'s native ring and double binary tree with the \bine{} tree.
+A butterfly-based allgather and reduce-scatter handle, with four buffer-management strategies, the non-contiguous data that \nccl{}'s fixed, per-channel partition of the work imposes on an algorithm whose window of active ranks grows and shrinks at every step.
+The same allgather is rebuilt a second time on \pat{}, \nccl{}'s own device-side machinery for aggregating many small transfers into fewer, larger messages.
+Finally, a tree-based allreduce, a composition not described in the original \bine{} paper but one that maps well onto \nccl{}'s channel system, roots a \bine{} tree differently on each channel, one root per channel instead of one per rank, and executes the reduce and the broadcast as a single fused kernel following the structure of \nccl{}'s own tree allreduce.
+
+Each component is evaluated on up to 128 GPUs across two supercomputers, against \nccl{}'s native ring, tree and \pat{} algorithms.
+The tree-based broadcast and reduce are up to $6.5\times$ faster than the ring at $128$ ranks, in the range of sizes between the ring's latency-optimised and its bandwidth-bound regimes.
+The tree-based allreduce is the fastest algorithm overall from $16$ ranks on for vectors up to $1$\,MB, up to $1.39\times$ faster than the best native algorithm at the same size.
+The allgather rebuilt on \pat{}, instead, does not improve on the butterfly kernels when several GPUs share a node, and is competitive with \nccl{}'s own \pat{} allgather only when there is one GPU per node.
+Taken together, the results give a precise account of where, inside \nccl{}, the locality of \bine{} pays for itself, and where \nccl{}'s own bandwidth-oriented algorithms remain the better choice.
 \end{abstract}

@@ -2,7 +2,7 @@
 % \binepic, \blab, and the colors ch0, ch1, chunkA, chunkB, chunkC, crosslink).
 % It also defines \binerot below; it can be moved to the preamble.
 
-% Bine tree of 8 ranks rooted at t (labels = (relative rank + t) mod 8); the root is highlighted.
+% \bine{} tree of $8$ ranks rooted at t (labels = (relative rank + t) mod 8); the root is highlighted.
 \newcommand{\binerot}[2]{%
   \begin{tikzpicture}[baseline=(lab.north), x=0.85cm, y=0.75cm,
       rank/.style={circle, draw, minimum size=0.55cm, inner sep=0pt,
@@ -23,13 +23,13 @@
 }
 
 \chapter{Tree-Based Allreduce}\label{ch:treeallreduce}
-This chapter implements the allreduce of \bine{} in \nccl{} as a reduce followed by a broadcast on the same Bine tree, executed by a single kernel.
+This chapter implements the allreduce of \bine{} in \nccl{} as a reduce followed by a broadcast on the same \bine{} tree, executed by a single kernel.
 It reuses the tables of \cref{ch:tree} and the structure of the \nccl{} tree allreduce (\cref{sec:nccl-tree}).
 \Cref{sec:tar-motivation} explains why this algorithm is a good fit for \nccl{}, \cref{sec:tar-schedule} how the tree is chosen for each channel, and \cref{sec:tar-kernel} how the kernel works.
 %==============================================================================
 \section{Motivation}\label{sec:tar-motivation}
 \paragraph{The allreduce of the butterfly.}
-For large vectors, the allreduce of \bine{} is a reduce-scatter followed by an allgather on the Bine butterfly, and for small vectors a recursive doubling in which the whole vector is exchanged at every step~\cite{desensi2025bine}.
+For large vectors, the allreduce of \bine{} is a reduce-scatter followed by an allgather on the \bine{} butterfly, and for small vectors a recursive doubling in which the whole vector is exchanged at every step~\cite{desensi2025bine}.
 Both follow the schedule of \cref{ch:butterfly}.
 In a butterfly each step moves a different amount of data, with a different partner: the window that a rank sends is half of the previous one in the reduce-scatter and twice as large in the allgather.
 \nccl{} is organised differently.
@@ -43,7 +43,7 @@ At every step in which a rank takes part, it sends or receives the \emph{whole} 
 The amount of data per edge is fixed, so the partition of \nccl{} fits without changes: no second partition, no permutation of the blocks, no staging buffer and no schedule thread.
 An allreduce built as a reduce followed by a broadcast inherits this property.
 The structure is shown in \cref{fig:tar-tree}: the reduce and the broadcast use the same edges, in opposite directions.
-The composition is not one of the two allreduce algorithms of the Bine paper, which are based on the butterfly (Sec.~4.4 of~\cite{desensi2025bine}). It combines the reduce and the broadcast for small vectors that the paper defines on the distance-halving Bine tree (Sec.~4.5 of~\cite{desensi2025bine}), and the allreduce as a reduce followed by a broadcast is the one of \cref{sec:bg-collectives}.
+The composition is not one of the two allreduce algorithms of the \bine{} paper, which are based on the butterfly (Sec.~4.4 of~\cite{desensi2025bine}). It combines the reduce and the broadcast for small vectors that the paper defines on the distance-halving \bine{} tree (Sec.~4.5 of~\cite{desensi2025bine}), and the allreduce as a reduce followed by a broadcast is the one of \cref{sec:bg-collectives}.
 Rooting that same pattern differently on each channel, rather than once for the whole communicator, is what maps it onto \nccl{}: the result is one root per channel instead of one per rank, at most $\min(p,\mathit{nchannels})$ of them, not a new algorithm.
 \begin{figure}[t]
   \centering
@@ -55,7 +55,7 @@ Rooting that same pattern differently on each channel, rather than once for the 
     \blab{0}{3}{1}{ch1}%
     \blab{0}{7}{2}{ch1}\blab{3}{4}{2}{ch1}%
     \blab{0}{1}{3}{ch1}\blab{3}{2}{3}{ch1}\blab{7}{6}{3}{ch1}\blab{4}{5}{3}{ch1}}
-  \caption{The allreduce on the Bine tree rooted at rank $0$ ($p=8$): the reduce
+  \caption{The allreduce on the \bine{} tree rooted at rank $0$ ($p=8$): the reduce
            (left, blue) and the broadcast (right, orange) use the same edges in opposite
            directions. Each edge carries the same chunks of the same slice, and the
            numbers are the time slots of one chunk.}
@@ -63,13 +63,13 @@ Rooting that same pattern differently on each channel, rather than once for the 
 \end{figure}
 \paragraph{Cost.}
 The tree has $s=\log_2p$ levels, the same shape as the binomial tree of \cref{sec:bg-bine}, but not the same cost model: \nccl{} pipelines the vector in chunks along the tree, as in \cref{sec:bg-double-tree}, so the latency term is not the $2s\,\alpha$ of the non-pipelined binomial tree of \cref{tab:bg-allreduce-cost}.
-Since the Bine tree is a binomial tree and not a binary one, the root has $s$ children and sends each chunk $s$ times, so the bandwidth term of a channel remains $\bigO{s\,n\beta}$ (\cref{sec:tree-collectives}).
+Since the \bine{} tree is a binomial tree and not a binary one, the root has $s$ children and sends each chunk $s$ times, so the bandwidth term of a channel remains $\bigO{s\,n\beta}$ (\cref{sec:tree-collectives}).
 The number of children of the other ranks is smaller: $u(r)-1$ for rank $r$ (\cref{sec:tree-collectives}).
 To avoid that the same rank has the largest fan-out in all the channels, the root of the tree is not fixed but depends on the channel (\cref{sec:tar-schedule}).
-The combination of two complementary Bine trees, as in the double binary tree of \cref{sec:bg-double-tree}, is left as future work.
+The combination of two complementary \bine{} trees, as in the double binary tree of \cref{sec:bg-double-tree}, is left as future work.
 %==============================================================================
 \section{Schedule}\label{sec:tar-schedule}
-The peers are those of the Bine tree of \cref{sec:tree-impl}.
+The peers are those of the \bine{} tree of \cref{sec:tree-impl}.
 The root-$0$ tables $\Send$ and $\Recv$ are stored in \texttt{channel.bine}, and the tree rooted in $t\neq0$ is obtained by rotating the ranks by $t$ as in \cref{sec:tree-root}.
 As in \cref{ch:tree}, the schedule is defined for $p=2^s$ ranks.
 In the kernel, a rank obtains its place in the tree of its channel with
@@ -111,7 +111,7 @@ The root has no parent: for each chunk the reduce ends and the broadcast starts 
 All the threads of the block execute a single fused primitive, \texttt{recvReduceCopySend}, built with \texttt{FanSymmetric}$\langle\texttt{BINE\_AR\_MAX\_FAN}\rangle$ with the children as the peers on both sides: for each chunk, it receives the chunk from all the children, combines it with its own input, writes the result in \texttt{recvbuff} and sends it to all the children.
 The post-operation of the reduction (for example, the division of the average) is applied here, once, by passing \texttt{postOp}$=$\texttt{true}.
 \paragraph{Non-root ranks.}
-The other ranks split the threads of the block in two groups, as \nccl{} does for its tree: with \texttt{Simple} the first half, plus $64$ threads when the half is at least $256$ threads, and with LL and LL128 about $70\,\%$ of the threads, rounded to a whole number of warps, since receiving from several children is more expensive than sending to them.
+The other ranks split the threads of the block in two groups, as \nccl{} does for its tree: with \texttt{Simple} the first half, plus $64$ threads when the half is at least $256$ threads, and with \texttt{LL} and \texttt{LL128} about $70\,\%$ of the threads, rounded to a whole number of warps, since receiving from several children is more expensive than sending to them.
 \begin{itemize}
   \item The \emph{reduce} group, $\texttt{FanAsymmetric}\langle\texttt{BINE\_AR\_MAX\_FAN},1\rangle$, receives from the children and sends to the parent.
   A leaf sends its input with \texttt{send}. An internal rank calls \texttt{recvReduceSend}, which receives the chunk from all its children, combines them with its own input and sends the result to the parent.
@@ -120,7 +120,7 @@ The other ranks split the threads of the block in two groups, as \nccl{} does fo
 \end{itemize}
 The two \texttt{Primitives} objects have different group identifiers (offset by \texttt{Proto::Max\allowbreak GroupWidth}), so that the synchronisation of one group does not involve the threads of the other.
 As in \nccl{}, both are instantiated with \texttt{Direct}$=1$, so that the zero-copy path is available (\cref{sec:nccl-tree}).
-Table~\ref{tab:tar-calls} lists the operations of each role, and \cref{alg:tar} the kernel.
+\cref{tab:tar-calls} lists the operations of each role, and \cref{alg:tar} the kernel.
 \begin{figure}[t]
   \centering
   \resizebox{\linewidth}{!}{%
@@ -182,7 +182,7 @@ Table~\ref{tab:tar-calls} lists the operations of each role, and \cref{alg:tar} 
 \begin{table}[t]
 \centering
 \small
-\caption{Operations of the Bine tree allreduce for each role. The reduce and the broadcast are executed by two groups of threads of the same block, except at the root.}
+\caption{Operations of the \bine{} tree allreduce for each role. The reduce and the broadcast are executed by two groups of threads of the same block, except at the root.}
 \label{tab:tar-calls}
 \begin{tabular}{@{}lll@{}}
 \toprule
@@ -195,7 +195,7 @@ Leaf     & \texttt{send}           & \texttt{recv} \\
 \end{tabular}
 \end{table}
 \begin{algorithm}[t]
-\caption{Bine tree allreduce (\texttt{runBineTree}, one block per channel).}
+\caption{\bine{} tree allreduce (\texttt{runBineTree}, one block per channel).}
 \label{alg:tar}
 \begin{algorithmic}[1]
 \State $(\mathit{grid},\mathit{count},\mathit{chunk}) \gets$ \Call{CollCbdPart}{};\quad \textbf{if} $\mathit{count}=0$ \textbf{then return}
@@ -260,65 +260,65 @@ This is safe without synchronisation between the groups: a chunk of the result r
 \section{Experimental results}\label{sec:tar-results}
 % Float-only pages only when nearly full, so that the plots share pages with the text.
 \renewcommand{\floatpagefraction}{0.95}
-This section evaluates the Bine tree allreduce of this chapter against the two allreduce algorithms that \nccl{} offers, ring and tree (\cref{sec:nccl-algorithms}), and against the Bine butterfly allreduce of \cref{ch:butterfly}.
+This section evaluates the \bine{} tree allreduce of this chapter against the two allreduce algorithms that \nccl{} offers, ring and tree (\cref{sec:nccl-algorithms}), and against the \bine{} butterfly allreduce of \cref{ch:butterfly}.
 \paragraph{Setup.}
 The setup is the one of \cref{ch:tree}: the experiments run on the MeluXina supercomputer, on nodes with four NVIDIA A100 GPUs connected by NVLink, with one rank per GPU.
 The runs use $p\in\{4,8,16,32,64,128\}$ ranks, so from one to $32$ nodes, with consecutive ranks on the same node. $p=4$ is entirely intra-node, and every larger $p$ also uses the inter-node network.
-The vector sizes are $1$\,kB, $16$\,kB, $256$\,kB, $1$\,MB, $4$\,MB and $64$\,MB, which cover the latency-bound regime, the transition region and the bandwidth-bound regime.
-Each algorithm is run with the LL and with the \texttt{Simple} protocol. LL128 is not measured, for the reasons given in \cref{ch:tree}.
-The algorithms are: the \nccl{} tree (\texttt{TREE}) and ring (\texttt{RING}), the Bine tree allreduce of this chapter (\texttt{BINE-TREE}), and the Bine butterfly allreduce with the send strategy (\texttt{BINE-BUTTERFLY-SEND}, \cref{ch:butterfly}).
+The vector sizes are 1\,kB, 16\,kB, 256\,kB, 1\,MB, 4\,MB and 64\,MB, which cover the latency-bound regime, the transition region and the bandwidth-bound regime.
+Each algorithm is run with the \texttt{LL} and with the \texttt{SIMPLE} protocol. \texttt{LL128} is not measured, for the reasons given in \cref{ch:tree}.
+The algorithms are: the \nccl{} tree (\texttt{TREE}) and ring (\texttt{RING}), the \bine{} tree allreduce of this chapter (\texttt{BINE-TREE}), and the \bine{} butterfly allreduce with the send strategy (\texttt{BINE-BUTTERFLY-SEND}, \cref{ch:butterfly}).
 Each run consists of $10$ warmup iterations followed by $40$ measured iterations.
 Each point is the median latency of the measured iterations.
 \paragraph{Overview.}
-\Cref{fig:tar-heatmap-simple} shows the fastest algorithm for each size and number of ranks with the \texttt{Simple} protocol
-\Cref{fig:tar-scaling} shows how the latency of the four algorithms grows with the number of ranks, \cref{fig:tar-heatmap} the fastest among the eight combinations of algorithm and protocol, and \cref{fig:tar-scaling-bt} the Bine tree against the \nccl{} tree and the Bine butterfly alone.
-In short, with the \texttt{Simple} protocol the Bine tree is faster than the \nccl{} tree for vectors up to $1$\,MB on almost all the scales, and for $1$\,MB it is up to $1.39\times$ faster than the best \nccl{} algorithm with the same protocol and the fastest algorithm overall from $16$ ranks on.
+\Cref{fig:tar-heatmap-simple} shows the fastest algorithm for each size and number of ranks with the \texttt{SIMPLE} protocol
+\Cref{fig:tar-scaling} shows how the latency of the four algorithms grows with the number of ranks, \cref{fig:tar-heatmap} the fastest among the eight combinations of algorithm and protocol, and \cref{fig:tar-scaling-bt} the \bine{} tree against the \nccl{} tree and the \bine{} butterfly alone.
+In short, with the \texttt{SIMPLE} protocol the \bine{} tree is faster than the \nccl{} tree for vectors up to 1\,MB on almost all the scales, and for 1\,MB it is up to $1.39\times$ faster than the best \nccl{} algorithm with the same protocol and the fastest algorithm overall from $16$ ranks on.
 For larger vectors the double binary tree and the ring of \nccl{} take over, as expected from their bandwidth-oriented design.
 \begin{figure}[!htb]
   \centering
   \includegraphics[width=0.66\linewidth]{AllReduce_SIMPLE_best_algo_heatmap.png}
-  \caption{Fastest algorithm for each vector size and number of ranks with the \texttt{Simple} protocol (median latency). Each cell lists the other algorithms with the percentage by which they are slower. BT: Bine tree, Bf/S: Bine butterfly (send), T: \nccl{} tree, R: \nccl{} ring.}
+  \caption{Fastest algorithm for each vector size and number of ranks with the \texttt{SIMPLE} protocol (median latency). Each cell lists the other algorithms with the percentage by which they are slower. BT: \bine{} tree, Bf/S: \bine{} butterfly (send), T: \nccl{} tree, R: \nccl{} ring.}
   \label{fig:tar-heatmap-simple}
 \end{figure}
 \paragraph{Simple protocol.}
-With \texttt{Simple}, the Bine tree is the fastest of the four algorithms in $26$ of the $36$ points (\cref{fig:tar-heatmap-simple}): all the points up to $1$\,MB but one ($256$\,kB on $128$ ranks, where the \nccl{} tree is $6\,\%$ faster), and $4$\,MB from $32$ ranks on. The ring and the \nccl{} tree are the fastest only at $4$ and $64$\,MB.
-Up to $1$\,MB the Bine tree and the \nccl{} tree move the data the same way, a pipelined tree with the whole slice on every edge, even though the two trees differ in shape: the \nccl{} tree is a double binary tree, while the Bine tree allreduce of this chapter is a single binomial tree whose root changes with the channel, with exactly $\min(p,\mathit{nchannels})$ distinct roots across the channels (\cref{sec:tar-schedule}).
-The Bine tree is faster in almost all the points: $29$ out of $36$ points are faster than the \nccl{} tree in the median.
-The gain is consistent across scales: on average $15\,\%$ for $1$\,kB, $5\,\%$ for $16$\,kB and $2\,\%$ for $256$\,kB, and it becomes sizeable for $1$\,MB and $4$\,MB ($26\,\%$ and $22\,\%$ on average, up to $1.5\times$ at $1$\,MB on $16$ ranks).
-The improvement over the ring is larger still for small vectors, because the latency of the ring is linear in $p$: for $1$\,kB the Bine tree is $1.8\times$ faster than the ring on $8$ ranks and $8.4\times$ faster on $128$ ranks.
-At $4$\,MB the Bine tree is the fastest algorithm from $32$ ranks on, and the ring remains ahead on $4$ to $16$ ranks, by $14$ to $22\,\%$.
+With \texttt{SIMPLE}, the \bine{} tree is the fastest of the four algorithms in $26$ of the $36$ points (\cref{fig:tar-heatmap-simple}): all the points up to 1\,MB but one (256\,kB on $128$ ranks, where the \nccl{} tree is $6\,\%$ faster), and 4\,MB from $32$ ranks on. The ring and the \nccl{} tree are the fastest only at $4$ and 64\,MB.
+Up to 1\,MB the \bine{} tree and the \nccl{} tree move the data the same way, a pipelined tree with the whole slice on every edge, even though the two trees differ in shape: the \nccl{} tree is a double binary tree, while the \bine{} tree allreduce of this chapter is a single binomial tree whose root changes with the channel, with exactly $\min(p,\mathit{nchannels})$ distinct roots across the channels (\cref{sec:tar-schedule}).
+The \bine{} tree is faster in almost all the points: $29$ out of $36$ points are faster than the \nccl{} tree in the median.
+The gain is consistent across scales: on average $15\,\%$ for 1\,kB, $5\,\%$ for 16\,kB and $2\,\%$ for 256\,kB, and it becomes sizeable for 1\,MB and 4\,MB ($26\,\%$ and $22\,\%$ on average, up to $1.5\times$ at 1\,MB on $16$ ranks).
+The improvement over the ring is larger still for small vectors, because the latency of the ring is linear in $p$: for 1\,kB the \bine{} tree is $1.8\times$ faster than the ring on $8$ ranks and $8.4\times$ faster on $128$ ranks.
+At 4\,MB the \bine{} tree is the fastest algorithm from $32$ ranks on, and the ring remains ahead on $4$ to $16$ ranks, by $14$ to $22\,\%$.
 \begin{figure}[!htbp]
   \centering
   \includegraphics[width=0.95\linewidth]{AllReduce_SIMPLE+LL_vs_ranks_by_size.png}
-  \caption{Median latency of the allreduce as a function of the number of ranks, for each vector size: Bine tree, Bine butterfly (send), \nccl{} tree and \nccl{} ring. Solid lines: \texttt{Simple}. Dashed lines: LL. Both axes are logarithmic.}
+  \caption{Median latency of the allreduce as a function of the number of ranks, for each vector size: \bine{} tree, \bine{} butterfly (send), \nccl{} tree and \nccl{} ring. Solid lines: \texttt{SIMPLE}. Dashed lines: \texttt{LL}. Both axes are logarithmic.}
   \label{fig:tar-scaling}
 \end{figure}
 \paragraph{Larger vectors and bandwidth.}
-The Bine tree is not particularly bandwidth-efficient compared to the double binary tree of \nccl{}, and this becomes visible with the \texttt{Simple} protocol for vectors larger than $4$\,MB, and earlier with LL.
+The \bine{} tree is not particularly bandwidth-efficient compared to the double binary tree of \nccl{}, and this becomes visible with the \texttt{SIMPLE} protocol for vectors larger than 4\,MB, and earlier with \texttt{LL}.
 This is what the cost model of \cref{sec:tar-motivation} predicts: a binomial tree whose root has $\log_2p$ children sends each chunk $\log_2p$ times, so its bandwidth term grows with $p$, whereas the double binary tree of \nccl{} keeps it constant by splitting the data between two complementary trees, and the ring is bandwidth-optimal.
-At $64$\,MB the latency of the Bine tree with \texttt{Simple} (\cref{fig:tar-scaling}) grows from $0.98$\,ms on $4$ ranks to $4.4$\,ms on $8$ and $14.6$\,ms on $128$, in line with this explanation.
-The Bine tree is therefore best suited to the range of sizes up to a few MB, which is the range in which the allreduce is latency-bound or in transition, and a natural extension is to give it the same two-tree structure as \nccl{} for large vectors.
+At 64\,MB the latency of the \bine{} tree with \texttt{SIMPLE} (\cref{fig:tar-scaling}) grows from 0.98\,ms on $4$ ranks to 4.4\,ms on $8$ and 14.6\,ms on $128$, in line with this explanation.
+The \bine{} tree is therefore best suited to the range of sizes up to a few MB, which is the range in which the allreduce is latency-bound or in transition, and a natural extension is to give it the same two-tree structure as \nccl{} for large vectors.
 \begin{figure}[!htbp]
   \centering
   \includegraphics[width=0.95\linewidth]{AllReduce_SIMPLE+LL_best_algo_heatmap.png}
-  \caption{Fastest algorithm for each vector size and number of ranks (median latency). Each cell lists the other combinations with the percentage by which they are slower. BT: Bine tree, Bf/S: Bine butterfly (send), T: \nccl{} tree, R: \nccl{} ring. The suffixes S and LL are the protocols.}
+  \caption{Fastest algorithm for each vector size and number of ranks (median latency). Each cell lists the other combinations with the percentage by which they are slower. BT: \bine{} tree, Bf/S: \bine{} butterfly (send), T: \nccl{} tree, R: \nccl{} ring. The suffixes S and LL are the protocols.}
   \label{fig:tar-heatmap}
 \end{figure}
 \paragraph{LL protocol.}
-With LL, which targets small messages, the \nccl{} tree and ring are the fastest algorithms, and the Bine tree remains within $27$ to $39\,\%$ of the best \nccl{} algorithm for $1$\,kB (\cref{fig:tar-heatmap}).
-For vectors above a few hundred kB the bandwidth term described above shows up earlier than with \texttt{Simple}, since LL transfers a flag with every data word and has a lower effective bandwidth.
-In this regime the Bine butterfly is faster than the Bine tree for $4$\,MB and $64$\,MB vectors from $16$ ranks on (\cref{fig:tar-scaling-bt}).
+With \texttt{LL}, which targets small messages, the \nccl{} tree and ring are the fastest algorithms, and the \bine{} tree remains within $27$ to $39\,\%$ of the best \nccl{} algorithm for 1\,kB (\cref{fig:tar-heatmap}).
+For vectors above a few hundred kB the bandwidth term described above shows up earlier than with \texttt{SIMPLE}, since \texttt{LL} transfers a flag with every data word and has a lower effective bandwidth.
+In this regime the \bine{} butterfly is faster than the \bine{} tree for 4\,MB and 64\,MB vectors from $16$ ranks on (\cref{fig:tar-scaling-bt}).
 \begin{figure}[!htbp]
   \centering
   \includegraphics[width=0.95\linewidth]{AllReduce_SIMPLE+LL_vs_ranks_by_size_BINE+TREE.png}
-  \caption{As \cref{fig:tar-scaling}, without the \nccl{} ring, to separate the Bine tree, the \nccl{} tree and the Bine butterfly.}
+  \caption{As \cref{fig:tar-scaling}, without the \nccl{} ring, to separate the \bine{} tree, the \nccl{} tree and the \bine{} butterfly.}
   \label{fig:tar-scaling-bt}
 \end{figure}
 \paragraph{Butterfly.}
-The Bine butterfly allreduce is useful as a reference for what a different structure costs inside \nccl{}.
-With \texttt{Simple} it takes between $1.2\times$ and $6.1\times$ the time of the best \nccl{} algorithm, and for small vectors the gap grows with $p$ ($1.2\times$ on $4$ ranks and $6.1\times$ on $128$ ranks for $1$\,kB).
-This is consistent with the motivation of \cref{sec:tar-motivation}: the butterfly has to handle windows of different sizes at each step on top of the fixed partition of \nccl{}, which the Bine tree avoids.
-For the largest vectors in LL, on the other hand, the butterfly improves over the Bine tree.
+The \bine{} butterfly allreduce is useful as a reference for what a different structure costs inside \nccl{}.
+With \texttt{SIMPLE} it takes between $1.2\times$ and $6.1\times$ the time of the best \nccl{} algorithm, and for small vectors the gap grows with $p$ ($1.2\times$ on $4$ ranks and $6.1\times$ on $128$ ranks for 1\,kB).
+This is consistent with the motivation of \cref{sec:tar-motivation}: the butterfly has to handle windows of different sizes at each step on top of the fixed partition of \nccl{}, which the \bine{} tree avoids.
+For the largest vectors in \texttt{LL}, on the other hand, the butterfly improves over the \bine{} tree.
 \paragraph{Summary.}
-With the \texttt{Simple} protocol, for vectors from $1$\,kB to a few MB, the Bine tree allreduce is on par with or faster than the \nccl{} tree and, for medium sizes on many ranks, than the ring, keeping the partition of \nccl{} unchanged and without a schedule thread or a staging buffer.
-For large vectors the bandwidth efficiency of the double binary tree and of the ring is higher, which defines the natural operating range of the Bine tree allreduce.
+With the \texttt{SIMPLE} protocol, for vectors from 1\,kB to a few MB, the \bine{} tree allreduce is on par with or faster than the \nccl{} tree and, for medium sizes on many ranks, than the ring, keeping the partition of \nccl{} unchanged and without a schedule thread or a staging buffer.
+For large vectors the bandwidth efficiency of the double binary tree and of the ring is higher, which defines the natural operating range of the \bine{} tree allreduce.

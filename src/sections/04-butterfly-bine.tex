@@ -14,7 +14,7 @@
 \colorlet{pch2}{ch2!70}
 \colorlet{pch3}{chunkB!90}
 
-This chapter implements the Bine butterfly of \cref{sec:bg-bine-butterfly} in \nccl{} for the allgather, the reduce-scatter and the allreduce.
+This chapter implements the \bine{} butterfly of \cref{sec:bg-bine-butterfly} in \nccl{} for the allgather, the reduce-scatter and the allreduce.
 \Cref{sec:bfly-impl} describes the schedule of the distance-doubling butterfly, \cref{sec:bfly-collectives} how it is turned into kernels, \cref{sec:bfly-dhlv} the distance-halving schedule used by the double send strategy, and \cref{sec:bfly-testing} the invariants that the schedule satisfies.
 
 %==============================================================================
@@ -81,7 +81,7 @@ The labels define where the block of a rank is stored in the kernels: the \emph{
 where $\mathrm{rev}$ reverses the $s$ bits.
 We will see that the blocks exchanged at a step are contiguous in the position space and, in general, not in the rank space.
 
-\subsection{Example: $p=8$}
+\subsection{Example: \texorpdfstring{$p=8$}{p = 8}}
 
 For $p=8$ ($s=3$), $\rho_0=1$, $\rho_1=-1$ and $\rho_2=3$.
 \Cref{tab:bfly-nu-p8} gives the labels and the positions, and \cref{fig:bfly-butterfly} the partners.
@@ -134,7 +134,7 @@ The labels are computed first and $\nu^{-1}$ is obtained by inverting them. Then
 The cost is $O(p\log p)$ time and memory.
 
 \begin{algorithm}[t]
-\caption{Schedule of the distance-doubling Bine butterfly ($p=2^s$).}
+\caption{Schedule of the distance-doubling \bine{} butterfly ($p=2^s$).}
 \label{alg:bfly-schedule}
 \begin{algorithmic}[1]
 \Require $p=2^s$
@@ -164,14 +164,14 @@ The table says who communicates with whom. Which data moves is decided by the co
   \item \emph{Allreduce.} Each rank obtains the elementwise reduction of the vectors of all the ranks. It is a reduce-scatter followed by an allgather (\cref{sec:bfly-allreduce}).
 \end{itemize}
 
-\subsection{Integration in \nccl{}}
+\subsection{Integration in NCCL}
 
 The butterfly is integrated as the tree (\cref{sec:tree-integration}), with the same algorithm \texttt{NCCL\_ALGO\_BINE} and pattern \texttt{ncclPatternBine}, and three pieces.
 \begin{itemize}
   \item \emph{Pattern.} \texttt{ncclPatternBine}, used by the host to compute the number of steps and the chunking.
   \item \emph{Tables.} The tables of \cref{sec:bfly-impl,sec:bfly-dhlv} are stored in \texttt{channel.bine} next to those of the tree: \texttt{partners} ($\Pi$), \texttt{dhlvPartners} ($\Pi^{\mathrm{dh}}$), \texttt{index} ($\nu$) and \texttt{order} ($\nu^{-1}$).
   The fields \texttt{nSteps} and \texttt{nDoublingSteps} are both set to $s$, and the kernels use the latter.
-  \item \emph{\texttt{RunWorkColl} specializations.} One for each collective and protocol, as for the tree, which call the kernel of the strategy of \cref{sec:bfly-strategies} (send, permute, block-by-block or double send).
+  \item \emph{\texttt{RunWorkColl} specialisations.} One for each collective and protocol, as for the tree, which call the kernel of the strategy of \cref{sec:bfly-strategies} (send, permute, block-by-block or double send).
 \end{itemize}
 
 \subsection{Blocks, positions and strategies}\label{sec:bfly-strategies}
@@ -300,7 +300,7 @@ Below it pos mode wins, since a contiguous run needs fewer calls than the stride
 \label{fig:bfly-partition}
 \end{figure}
 
-Pos mode needs no synchronization among channels because it is \emph{channel-closed}: a position is written, and re-sent, only by the channel that owns it, and the range that a rank sends is the range that its partner receives, so both ends clip it with the same ownership and issue the same transfers.
+Pos mode needs no synchronisation among channels because it is \emph{channel-closed}: a position is written, and re-sent, only by the channel that owns it, and the range that a rank sends is the range that its partner receives, so both ends clip it with the same ownership and issue the same transfers.
 A channel with an empty intersection does not take part in that direction of the step.
 Permute cannot use pos mode: its final permutation moves the block of rank $b$ from position $\mathrm{pos}(b)$ to $b$, across the ranges of different channels, and \nccl{} has no barrier among channels.
 
@@ -312,7 +312,7 @@ They differ only in \textsc{PreStep}, \textsc{Slot}, \textsc{PostStep} (\cref{ta
 $O$ is the set of positions owned by the channel ($[0,p)$ in slice mode) and $n_s$ the number of threads of the send group.
 
 \begin{algorithm}[t]
-\caption{Bine allgather, kernel of one channel.}
+\caption{\bine{} allgather, kernel of one channel.}
 \label{alg:bfly-allgather}
 \begin{algorithmic}[1]
 \State \Call{PreStep}{}\Comment{send: exchange; otherwise copy, fused into step $0$}
@@ -336,7 +336,7 @@ $O$ is the set of positions owned by the channel ($[0,p)$ in slice mode) and $n_
 \end{algorithm}
 
 \begin{algorithm}[t]
-\caption{Bine reduce-scatter, kernel of one channel.}
+\caption{\bine{} reduce-scatter, kernel of one channel.}
 \label{alg:bfly-reducescatter}
 \begin{algorithmic}[1]
 \State \Call{PreStep}{}\Comment{permute: in-place permutation of the input, then barrier}
@@ -435,7 +435,7 @@ The proxy must derive the same chunk size.
 \Cref{alg:bfly-allreduce} shows the kernel. A rank skips a step when its partner is undefined or is itself, and the proxy applies the same condition.
 
 \begin{algorithm}[t]
-\caption{Bine allreduce, kernel of one channel.}
+\caption{\bine{} allreduce, kernel of one channel.}
 \label{alg:bfly-allreduce}
 \begin{algorithmic}[1]
 \State copy \texttt{sendbuff} to \texttt{recvbuff} if they differ;\ \textbf{barrier}
@@ -536,7 +536,7 @@ It therefore moves the largest data over the longest distance, the opposite of t
 The kernels have the structure of \cref{alg:bfly-allgather,alg:bfly-reducescatter} with $\Pi^{\mathrm{dh}}$ and the circular window in place of the position space.
 Position and block coincide, so both partitions of \cref{sec:bfly-pos} apply.
 The only copy is that of the own block, fused as in \cref{sec:bfly-strategies}.
-A window of $2^g$ blocks starting at $a$ is at most two runs, $[a,\min(a+2^g,p))$ and, if it wraps, $[0,a+2^g-p)$, each intersected with the positions owned by the channel and cut into chunks when \texttt{channelCount}$=$\texttt{count}, and block by block otherwise.
+A window of $2^g$ blocks starting at $a$ is at most two runs, $[a,\min(a+2^g,p))$ and, if it wraps, $[0,a+2^g-p)$, each intersected with the positions owned by the channel and cut into chunks when \texttt{channelCount}$=$\texttt{count}, and block-by-block otherwise.
 Sender and receiver visit the runs in the same order, since the window received is the one the partner sends.
 The window start is updated at every step, also when the rank does not take part in it.
 
@@ -626,9 +626,9 @@ The closed forms are what fixes the partners (and, for $\Pi^{\mathrm{dh}}$, the 
 The two generators are separate code, so (\ref{inv:dh-rev}) also transfers to $\Pi^{\mathrm{dh}}$ what was checked on $\Pi$.
 
 \paragraph{Locality (\ref{inv:dh-dist}).}
-Since $\lvert\tau_i\rvert=(2^{s-i}\pm1)/3\le p/2$, the modular distance between partners is exactly $\lvert\tau_i\rvert$, about $2/3$ of the $2^{s-i-1}$ of a standard distance-halving butterfly (Eq.~\eqref{eq:bg-bine-bfly-partner} and~\cite{desensi2025bine}).
+Since $\lvert\tau_i\rvert=(2^{s-i}\pm1)/3\le p/2$, the modular distance between partners is exactly $\lvert\tau_i\rvert$, about $2/3$ of the $2^{s-i-1}$ of a standard distance-halving butterfly (\cref{eq:bg-bine-bfly-partner} and~\cite{desensi2025bine}).
 The sequence $\lvert\tau_i\rvert$ is $3,1,1$ for $p=8$ and does not increase in general.
-This is the property that gives Bine its advantage, and it does not depend on the sign, so it does not replace (\ref{inv:dh-closed}).
+This is the property that gives \bine{} its advantage, and it does not depend on the sign, so it does not replace (\ref{inv:dh-closed}).
 
 \paragraph{Windows (\ref{inv:dh-window}).}
 This is the semantic check of the distance-halving table as a schedule of the reduce-scatter.
@@ -645,7 +645,7 @@ The tests are exhaustive over all ranks and steps for every power of two $p\le 2
 Beyond this range, correctness relies on the arguments of this section, not on testing.
 They check the schedule only: the kernels, the work partition and the splitting of the circular windows into runs (\cref{sec:bfly-kernels}) are not covered here.
 The oracles are of different strength.
-(\ref{inv:bfly-closed}) recomputes $\rho_i$ with the same recurrence as the generator, so it only checks that the table realizes its defining formula, while (\ref{inv:dh-closed}) uses the closed form of $\tau_i$ and therefore an independent computation.
+(\ref{inv:bfly-closed}) recomputes $\rho_i$ with the same recurrence as the generator, so it only checks that the table realises its defining formula, while (\ref{inv:dh-closed}) uses the closed form of $\tau_i$ and therefore an independent computation.
 (\ref{inv:bfly-split}) and (\ref{inv:dh-window}) are the checks of the construction as a whole.
 (\ref{inv:dh-window}) uses the keep rule and the start $a_0(r)$ of \cref{sec:bfly-dhlv} as oracle, so it validates the table against these rules, and the rules themselves rest on the argument above.
 
@@ -673,13 +673,13 @@ This section compares the \bine{} butterfly allgather and reduce-scatter of \cre
 We first compare \bine{}, with its best strategy at each point, with the ring (\cref{sec:bfly-res-ring}), and then the four strategies with one another (\cref{sec:bfly-res-modes}).
 
 \paragraph{Setup.}
-Experiments run on the Leonardo supercomputer~\cite{cineca2024leonardo}, on nodes with four NVIDIA A100 GPUs connected by NVLink, with $p\in\{4,8,16,32,64\}$ ranks (one to 16 nodes, one rank per GPU) and block sizes from 1\,kB to 64\,MB (the block contributed by each rank in the allgather and obtained by each rank in the reduce-scatter, as in \cref{ch:tree}).
+Experiments run on the Leonardo supercomputer~\cite{turisini2024leonardo}, on nodes with four NVIDIA A100 GPUs connected by NVLink, with $p\in\{4,8,16,32,64\}$ ranks (one to 16 nodes, one rank per GPU) and block sizes from 1\,kB to 64\,MB (the block contributed by each rank in the allgather and obtained by each rank in the reduce-scatter, as in \cref{ch:tree}).
 Each run has $10$ warmup and $40$ measured iterations, and each point is the median latency of the measured iterations, as in \cref{ch:treeallreduce}.
 Since a node holds four GPUs, $p=4$ is entirely intra-node.
 \texttt{LL128} is not measured, for the reasons of \cref{sec:tree-results}.
 
 %------------------------------------------------------------------------------
-\subsection{\bine{} versus ring}\label{sec:bfly-res-ring}
+\subsection{Bine versus ring}\label{sec:bfly-res-ring}
 
 \Cref{fig:bfly-scaling} shows the scaling with $p$ of the ring and of the best \bine{} strategy, \cref{fig:bfly-heatmap-simple,fig:bfly-heatmap-best} the fastest algorithm at each point (with \texttt{SIMPLE} only, and with the best protocol of each algorithm), and \cref{tab:bfly-best} the ratio between the ring and \bine{}, each with its best protocol.
 The two collectives behave in the same way.
@@ -867,7 +867,7 @@ In the distance-doubling schedule the largest windows ($p/2$ and $p/4$ blocks, a
 With four consecutive ranks per node a close partner is often on the same node and a far one rarely, so in the first schedule the largest windows travel mostly over NVLink and in the second mostly over the network.
 On the uplinks that connect the nodes to the network this doubles the load: on $8$ ranks each uplink carries $6$ blocks per direction over the whole reduce-scatter (and the same in the allgather, its time reverse) with distance doubling and $12$ with distance halving (\cref{fig:bfly-dh-tree}).
 
-% \dhstep{width}{pairs a/b}{uplink load}{label}: one allgather step on 8 ranks, 2 nodes of 4
+% \dhstep{width}{pairs a/b}{uplink load}{label}: one allgather step on $8$ ranks, 2 nodes of 4
 % under a network switch; every pair of the step drawn along the links it uses.
 \newcommand{\dhstep}[4]{%
   \begin{tikzpicture}[x=0.5cm, y=0.62cm,

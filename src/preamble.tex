@@ -5,9 +5,11 @@
 % ---------------------------------------------------------------------------
 \usepackage[utf8]{inputenc}
 \usepackage{microtype}
+% Long \texttt{} identifiers (NCCL symbols) cannot be hyphenated, so a few lines
+% would otherwise stick out into the margin. Let TeX spread the slack into the
+% interword spaces of the whole paragraph instead of overflowing the text block.
+\emergencystretch=3em
 \usepackage{csquotes}          % required by biblatex for proper quoting
-\usepackage{tikz}
-\usepackage{subcaption}
 
 % ---------------------------------------------------------------------------
 % Math, figures, tables, code
@@ -42,6 +44,11 @@
   style=numeric,
   sorting=nyt,
   maxbibnames=10,
+  % The prose uses British spelling, so use British date order in the bibliography
+  % too ("visited on 24 November 2026" instead of "11/24/2026"): without babel,
+  % biblatex would otherwise fall back to the American strings and date format.
+  language=british,
+  urldate=long,                 % "visited on 24 November 2026", not "24/11/2026"
 ]{biblatex}
 \addbibresource{src/references.bib}
 
@@ -50,11 +57,16 @@
 % ---------------------------------------------------------------------------
 \usepackage[hidelinks]{hyperref}   % print-friendly; see sapthesis doc for colors
 \usepackage[nameinlink,capitalise]{cleveref}
+% Long URLs in the bibliography break only after "/" and "-" by default, which
+% forces TeX to stretch the line; xurl lets them break anywhere.
+\usepackage{xurl}
 
 % ---------------------------------------------------------------------------
 % Acronyms
 % ---------------------------------------------------------------------------
-\usepackage[printonlyused]{acronym}
+% The list of acronyms is written out by hand (no \ac{} markup in the text), so
+% "printonlyused" would leave the page empty and the back-links have no target.
+\usepackage[nohyperlinks]{acronym}
 
 % ---------------------------------------------------------------------------
 % Project macros (keep notation consistent across chapters)
@@ -64,9 +76,12 @@
 \newcommand{\bine}{\textsc{Bine}}
 \newcommand{\pat}{\textsc{PAT}}
 \newcommand{\todo}[1]{\textcolor{red}{[TODO: #1]}}   % remove before submission
+% \brk: a break opportunity inside a long \texttt{} identifier, with nothing
+% added at the break (a hyphen would look like part of the identifier).
+\newcommand{\brk}{\discretionary{}{}{}}
 
 
-\usepackage{amsmath,amssymb,amsthm,booktabs,algorithm,algpseudocode}
+\usepackage{amsthm,algorithm,algpseudocode}   % amsmath and booktabs come from sapthesis, amssymb from above
 \newtheorem{lemma}{Lemma}
 \newcommand{\rtn}{\mathit{rank2nb}}
 \newcommand{\ntr}{\mathit{nb2rank}}

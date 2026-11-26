@@ -5,14 +5,14 @@
 %==============================================================================
 \section{Schedule construction}\label{sec:tree-impl}
 
-This section describes how the schedule of the Bine tree is computed and used in \nccl{}.
-The Bine tree, its negabinary representation and its properties are described in Sec.~\ref{sec:bg-bine}.
+This section describes how the schedule of the \bine{} tree is computed and used in \nccl{}.
+The \bine{} tree, its negabinary representation and its properties are described in \cref{sec:bg-bine}.
 The schedule is built for $p=2^s$ ranks and for root $0$, and is defined only for power-of-two numbers of ranks.
-The schedule for any other root is obtained by rotating the root-$0$ schedule (Sec.~\ref{sec:tree-root}).
+The schedule for any other root is obtained by rotating the root-$0$ schedule (\cref{sec:tree-root}).
 
 \subsection{Output and notation}
 
-The schedule is stored in two tables of size $p\times s$ where $p$ is the number of ranks and $s$ the number of steps as in Table~\ref{tab:notation},
+The schedule is stored in two tables of size $p\times s$ where $p$ is the number of ranks and $s$ the number of steps as in \cref{tab:notation},
 \begin{align}
   \Send(r,i) &\in \{0,\dots,p-1\}\cup\{\none\}, \\
   \Recv(r,i) &\in \{0,\dots,p-1\}\cup\{\none\},
@@ -27,7 +27,7 @@ void ncclGetBineTree(int nRanks, int steps,
 \end{verbatim}
 which writes two flat arrays of $p\cdot s$ integers (\texttt{sendTable} and \texttt{recvTable}), with $-1$ encoding $\none$, and asserts that $2^s=p$.
 
-The construction uses the quantities defined in Sec.~\ref{sec:bg-bine}: the mask $M_i$ (\texttt{(1 << (steps - step)) - 1} in the code), the partner $\pi_i(r)$ (Eq.~\eqref{eq:partner}), and the run $u(r)$ and receive step $i_r$ (Eq.~\eqref{eq:recv-step}).
+The construction uses the quantities defined in \cref{sec:bg-bine}: the mask $M_i$ (\texttt{(1 << (steps - step)) - 1} in the code), the partner $\pi_i(r)$ (\cref{eq:partner}), and the run $u(r)$ and receive step $i_r$ (\cref{eq:recv-step}).
 In the code, $u(r)$ is computed by scanning the bits of $\rtn(r)$ from the least significant one until the first that differs, capped at $s$ bits, and for the root we set $i_0=-1$, since it already holds the data before step $0$.
 
 \subsection{Definition of the schedule}
@@ -56,10 +56,10 @@ The root has $\nbr{0}=0\cdots0$ and $i_0=-1$, so it sends at every step, to the 
   \label{eq:root}
 \end{equation}
 
-\subsection{Example: $p=8$}
+\subsection{Example: \texorpdfstring{$p=8$}{p = 8}}
 
-For $p=8$ ($s=3$) the masks are $M_0=111$, $M_1=011$, $M_2=001$, and the representations $\nbr{r}$, the runs $u(r)$ and the receive steps $i_r$ are those of Table~\ref{tab:bg-bine-p8}.
-Rank $3$ was worked out in Sec.~\ref{sec:bg-bine}. The resulting edges for all ranks are $0\to3$ at step $0$, $0\to7$ and $3\to4$ at step $1$, and $0\to1$, $3\to2$, $7\to6$ and $4\to5$ at step $2$.
+For $p=8$ ($s=3$) the masks are $M_0=111$, $M_1=011$, $M_2=001$, and the representations $\nbr{r}$, the runs $u(r)$ and the receive steps $i_r$ are those of \cref{tab:bg-bine-p8}.
+Rank $3$ was worked out in \cref{sec:bg-bine}. The resulting edges for all ranks are $0\to3$ at step $0$, $0\to7$ and $3\to4$ at step $1$, and $0\to1$, $3\to2$, $7\to6$ and $4\to5$ at step $2$.
 The tables are (``--'' stands for $\none$):
 \begin{center}
 \begin{tabular}{@{}c ccc @{\qquad} ccc@{}}
@@ -82,12 +82,12 @@ $r$ & $i{=}0$ & $i{=}1$ & $i{=}2$ & $i{=}0$ & $i{=}1$ & $i{=}2$ \\
 
 \subsection{Computing the tables}
 
-Algorithm~\ref{alg:bine-schedule} computes both tables.
+\cref{alg:bine-schedule} computes both tables.
 For each rank it computes the receive step, registers the edge with the parent, and then registers the edges with the children.
 Each edge is written on both endpoints at once ($\Send$ on the sender, $\Recv$ on the receiver), so the tables are consistent by construction.
 
 \begin{algorithm}[H]
-\caption{Schedule of the Bine tree rooted at rank $0$ ($p=2^s$).}
+\caption{Schedule of the \bine{} tree rooted at rank $0$ ($p=2^s$).}
 \label{alg:bine-schedule}
 \begin{algorithmic}[1]
 \Require $p=2^s$
@@ -99,12 +99,12 @@ Each edge is written on both endpoints at once ($\Send$ on the sender, $\Recv$ o
     \State $i_r\gets -1$ \Comment{root: sends at every step}
   \Else
     \State $u\gets$ number of consecutive LSBs of $\nbr{r}$ equal to its LSB
-    \State $i_r\gets s-u$ \Comment{Eq.~\eqref{eq:recv-step}}
+    \State $i_r\gets s-u$ \Comment{\cref{eq:recv-step}}
     \State $\mathit{parent}\gets \ntr(\nbr{r}\oplus M_{i_r})$
     \State $\Recv(r,i_r)\gets \mathit{parent}$;\quad $\Send(\mathit{parent},i_r)\gets r$
   \EndIf
   \For{$i\gets i_r+1$ \textbf{to} $s-1$}
-    \State $q\gets \ntr(\nbr{r}\oplus M_i)$ \Comment{Eq.~\eqref{eq:partner}}
+    \State $q\gets \ntr(\nbr{r}\oplus M_i)$ \Comment{\cref{eq:partner}}
     \State $\Send(r,i)\gets q$;\quad $\Recv(q,i)\gets r$
   \EndFor
 \EndFor
@@ -150,25 +150,25 @@ The returned value $-1$ means that the rank does not communicate at that step.
 \section{Broadcast and reduce}\label{sec:tree-collectives}\label{sec:tree-bcast}\label{sec:tree-reduce}
 
 The tables describe the communication pattern only. Which data moves at each step is decided by the collective.
-This section uses the Bine tree for broadcast and reduce, where every edge carries the whole data: the broadcast sends the buffer of the root along the tree rooted at \texttt{work->root}, and the reduce uses the same edges in the opposite direction and combines the contributions at the root.
+This section uses the \bine{} tree for broadcast and reduce, where every edge carries the whole data: the broadcast sends the buffer of the root along the tree rooted at \texttt{work->root}, and the reduce uses the same edges in the opposite direction and combines the contributions at the root.
 
-\subsection{Integration in \nccl{}}\label{sec:tree-integration}
+\subsection{Integration in NCCL}\label{sec:tree-integration}
 
-\nccl{} implements only the ring natively for these two collectives, so Bine is added as a new algorithm, \texttt{NCCL\_ALGO\_BINE}, with three pieces.
+\nccl{} implements only the ring natively for these two collectives, so \bine{} is added as a new algorithm, \texttt{NCCL\_ALGO\_BINE}, with three pieces.
 \begin{itemize}
   \item A pattern, \texttt{ncclPatternBine}, which the host uses to compute the number of steps and the chunking.
-  \item The root-$0$ tables of Sec.~\ref{sec:tree-impl}, stored in \texttt{channel.bine} and read through the lookup of Sec.~\ref{sec:tree-root}.
-  \item One \texttt{RunWorkColl} specialization for each collective and protocol, which selects the protocol parameters and calls the common device function \texttt{runBine}.
+  \item The root-$0$ tables of \cref{sec:tree-impl}, stored in \texttt{channel.bine} and read through the lookup of \cref{sec:tree-root}.
+  \item One \texttt{RunWorkColl} specialisation for each collective and protocol, which selects the protocol parameters and calls the common device function \texttt{runBine}.
 \end{itemize}
 
 \subsection{Kernels}
 
 \paragraph{Structure of \texttt{runBine}.}
 A block runs \texttt{runBine} for one channel.
-It obtains its slice and the chunk size with \texttt{ncclCollCbdPart} (Sec.~\ref{sec:nccl-cbd}), looks up its peer at each step in the tables rotated by the root (Sec.~\ref{sec:tree-root}), and calls the \texttt{Primitives} operation that matches its role in that step (Sec.~\ref{sec:nccl-primitives}).
-By Eqs.~\eqref{eq:recv-table} and~\eqref{eq:send-table}, at each step a rank either receives or sends, so the fan is always $\langle1,0\rangle$ or $\langle0,1\rangle$, and steps in which the rank is idle are skipped.
+It obtains its slice and the chunk size with \texttt{ncclCollCbdPart} (\cref{sec:nccl-cbd}), looks up its peer at each step in the tables rotated by the root (\cref{sec:tree-root}), and calls the \texttt{Primitives} operation that matches its role in that step (\cref{sec:nccl-primitives}).
+By \cref{eq:recv-table,eq:send-table}, at each step a rank either receives or sends, so the fan is always $\langle1,0\rangle$ or $\langle0,1\rangle$, and steps in which the rank is idle are skipped.
 The kernels implement no data movement themselves: all transfers, and in the reduce the combination of the data, are done by the \texttt{Primitives}.
-The two kernels differ in the direction of the walk (root to leaves for the broadcast, leaves to root for the reduce), in the loop order, and in the operations used (Table~\ref{tab:bine-bcast-calls}).
+The two kernels differ in the direction of the walk (root to leaves for the broadcast, leaves to root for the reduce), in the loop order, and in the operations used (\cref{tab:bine-bcast-calls}).
 Each operation has a zero-copy variant, which replaces the staged one when \texttt{work->direct} allows it, and the algorithms below show the staged names only.
 
 \paragraph{Loop order and pipelining.}
@@ -179,14 +179,14 @@ The loop order determines how much of the tree is traversed concurrently
   For each chunk of the slice, the rank walks the steps from $0$ to $s-1$.
   Within a chunk, an internal rank is store-and-forward: it first receives the chunk and then sends it to its children, one per step.
   There is no synchronisation between chunks: a rank starts chunk $c+1$ as soon as it has issued its sends for chunk $c$, without waiting for chunk $c$ to reach the leaves.
-  Consecutive chunks therefore overlap across levels, since a parent can send chunk $c+1$ while its child is still forwarding chunk $c$, up to the depth of the slot FIFO (Sec.~\ref{sec:nccl-transport}).
+  Consecutive chunks therefore overlap across levels, since a parent can send chunk $c+1$ while its child is still forwarding chunk $c$, up to the depth of the slot FIFO (\cref{sec:nccl-transport}).
   \item \emph{Reduce} (\emph{step-outer}, \cref{fig:bine-step-outer}).
   For each step, from $s-1$ down to $0$, the rank processes its whole slice: it receives and accumulates the slice from one child before moving to the next, and it sends the result to its parent only after the last child.
   A parent therefore cannot start before the full slice has arrived from the child it is waiting on, and the levels of the tree are executed essentially in series.
 \end{itemize}
-Chunking in the Bine kernels thus only hides latency across levels (and, in the broadcast, across consecutive chunks). It does not amortise the bandwidth term as in the pipelined ring of Eq.~\eqref{eq:bg-ring-bcast}.
-In the broadcast the root still sends every chunk to its $s$ children, and in the reduce it still receives $s$ full slices, so the bandwidth term stays at $s\,n\beta$ as in Eq.~\eqref{eq:bg-tree-cost}.
-This is the reason why Bine loses against the ring for large vectors.
+Chunking in the \bine{} kernels thus only hides latency across levels (and, in the broadcast, across consecutive chunks). It does not amortise the bandwidth term as in the pipelined ring of \cref{eq:bg-ring-bcast}.
+In the broadcast the root still sends every chunk to its $s$ children, and in the reduce it still receives $s$ full slices, so the bandwidth term stays at $s\,n\beta$ as in \cref{eq:bg-tree-cost}.
+This is the reason why \bine{} loses against the ring for large vectors.
 
 \begin{figure}[H]
   \centering
@@ -214,7 +214,7 @@ This is the reason why Bine loses against the ring for large vectors.
     \label{fig:bine-step-outer}
   \end{subfigure}
 
-  \caption{Link usage on an 8-rank distance-halving Bine tree rooted at rank~$0$.
+  \caption{Link usage on an 8-rank distance-halving \bine{} tree rooted at rank~$0$.
            Arrows are links coloured by the chunk they carry, grey links are idle.}
   \label{fig:bine-loop-order}
 \end{figure}
@@ -223,7 +223,7 @@ This is the reason why Bine loses against the ring for large vectors.
 A \texttt{Primitives} object is bound to its peers at construction, when it loads the connectors towards them, so a new object is needed whenever the peer or the direction changes.
 In the broadcast it is constructed inside the step loop, hence for every chunk and every step in which the rank is active. In the reduce it is constructed once per step and reused for all the chunks of the slice.
 Since the fan of an object is fixed at compile time, the kernel instantiates the two fans $\langle1,0\rangle$ and $\langle0,1\rangle$ and chooses between them with the role of the rank in the step.
-The cost of this setup, and the fact that no object receives and sends at the same time, are the main differences from the fused kernels of the ring (Sec.~\ref{sec:tree-ll}).
+The cost of this setup, and the fact that no object receives and sends at the same time, are the main differences from the fused kernels of the ring (\cref{sec:tree-ll}).
 
 \paragraph{Zero-copy selection.}
 The broadcast reads the two direct flags separately, \texttt{NCCL\_P2P\_READ} for the receive and \texttt{NCCL\_P2P\_WRITE} for the send, and always instantiates the primitives with \texttt{Direct}$=1$, deciding at run time between the direct and the staged call.
@@ -240,10 +240,10 @@ A non-root rank does one receive and $u(r)-1$ sends in the broadcast, and $u(r)-
 For $p=8$ and root $0$, rank $3$ receives from rank $0$ at step $0$ and sends to $4$ and $2$ at steps $1$ and $2$ in the broadcast. In the reduce it receives from $2$ and $4$ at steps $2$ and $1$ and sends to $0$ at step $0$.
 
 \paragraph{LL and LL128.}
-These protocols have no zero-copy path, so \texttt{directRecvReduceCopy} had to be added to \texttt{PrimitivesWithoutDirect} in \texttt{primitives.h} for the reduce kernel to be instantiated with them.
+These protocols have no zero-copy path, so \texttt{directRecv\brk{}Reduce\brk{}Copy} had to be added to \texttt{Primitives\brk{}Without\brk{}Direct} in \texttt{primitives.h} for the reduce kernel to be instantiated with them.
 
 \begin{algorithm}[H]
-\caption{Bine broadcast (\texttt{runBine}, one block per channel).}
+\caption{\bine{} broadcast (\texttt{runBine}, one block per channel).}
 \label{alg:bine-bcast}
 \begin{algorithmic}[1]
 \State $(\mathit{grid},\mathit{count},\mathit{chunk}) \gets$ \Call{CollCbdPart}{}
@@ -264,7 +264,7 @@ These protocols have no zero-copy path, so \texttt{directRecvReduceCopy} had to 
 \end{algorithm}
 
 \begin{algorithm}[H]
-\caption{Bine reduce (\texttt{runBine}, one block per channel).}
+\caption{\bine{} reduce (\texttt{runBine}, one block per channel).}
 \label{alg:bine-reduce}
 \begin{algorithmic}[1]
 \State $\mathit{reduced} \gets \textbf{false}$
@@ -287,7 +287,7 @@ These protocols have no zero-copy path, so \texttt{directRecvReduceCopy} had to 
 \centering
 \footnotesize
 \setlength{\tabcolsep}{4pt}
-\caption{\nccl{} operations used by the Bine broadcast and reduce. The direct operation is used when the zero-copy path is available.}
+\caption{\nccl{} operations used by the \bine{} broadcast and reduce. The direct operation is used when the zero-copy path is available.}
 \label{tab:bine-bcast-calls}
 \begin{tabularx}{\linewidth}{@{}l X c l l@{}}
 \toprule
@@ -310,7 +310,7 @@ Reduce & Receive from a child (first or later) & $\langle1,0\rangle$ & \texttt{d
 
 The schedule is a deterministic function of $p=2^s$ and of the root $t$, and every property the collectives rely on is a statement about finite tables.
 We therefore test it exhaustively against a set of invariants, for every $p=2^s$ with $1\le s\le 12$ (up to $2^{12}=4{,}096$ ranks), every root $t\in[0,p-1]$, every rank and every step.
-The invariants are checked on the rooted schedule $\Send_t,\Recv_t$ obtained through the rotation of Eq.~\eqref{eq:rotation}, not only on the root-$0$ tables, so that they also validate the rotation.
+The invariants are checked on the rooted schedule $\Send_t,\Recv_t$ obtained through the rotation of \cref{eq:rotation}, not only on the root-$0$ tables, so that they also validate the rotation.
 
 \subsection{Invariants}
 
@@ -343,13 +343,13 @@ Together they say that the edges $\{a\xrightarrow{i}b \mid \Send_t(a,i)=b\}$ for
 The argument has three parts.
 
 \emph{Every rank has exactly one parent.}
-A non-root rank $r$ receives only at the step $i_r=s-u(r)$ of Eq.~\eqref{eq:recv-step}, and $u(r)$ is a single number, so $r$ has exactly one incoming edge (\ref{inv:once}).
+A non-root rank $r$ receives only at the step $i_r=s-u(r)$ of \cref{eq:recv-step}, and $u(r)$ is a single number, so $r$ has exactly one incoming edge (\ref{inv:once}).
 For the root, $i_0=-1$ and no receive is ever defined (\ref{inv:root}).
 Rotation is a bijection on the ranks and does not change the steps in which a rank communicates, so this holds for every root.
 That the incoming edge of $r$ is the send of its parent at the same step is the symmetry (\ref{inv:sym}), argued next.
 
 \emph{Data flows forward in time.}
-By Eq.~\eqref{eq:send-table} a rank sends only at steps $i>i_r$, and from step $0$ for the root (\ref{inv:causal}).
+By \cref{eq:send-table} a rank sends only at steps $i>i_r$, and from step $0$ for the root (\ref{inv:causal}).
 Hence the parent $a$ of a rank $r$ satisfies $\rho_t(a)<\rho_t(r)$, so following parent pointers strictly decreases the receive step.
 The walk cannot enter a cycle and ends at a rank without an incoming edge, which by (\ref{inv:once}) and (\ref{inv:root}) can only be the root.
 In particular, the data a rank forwards is always already available.
@@ -358,10 +358,10 @@ In particular, the data a rank forwards is always already available.
 For every $r\neq0$ the representation $\nbr{r}$ has at least one least significant bit, so $1\le u(r)\le s$ and $i_r\in[0,s-1]$: every non-root rank has a receive step inside the schedule (\ref{inv:reach}).
 For $i\le s-1$ the mask $M_i$ has at least one bit set, so $\nbr{r}\oplus M_i\neq\nbr{r}$, and since $\ntr$ inverts $\rtn$, $\pi_i(r)\neq r$ (\ref{inv:self}).
 
-Consequently the tree has $p-1$ edges, a broadcast on it completes in $s$ steps with every rank holding the data before it forwards it, and the reversed tree (exchanging the roles of $\Send_t$ and $\Recv_t$) gives the corresponding reduce (Sec.~\ref{sec:tree-reduce}).
+Consequently the tree has $p-1$ edges, a broadcast on it completes in $s$ steps with every rank holding the data before it forwards it, and the reversed tree (exchanging the roles of $\Send_t$ and $\Recv_t$) gives the corresponding reduce (\cref{sec:tree-reduce}).
 
 \paragraph{Sender and receiver agree (\ref{inv:sym}).}
-Both endpoints compute the partner with Eq.~\eqref{eq:partner}, so $q=\pi_i(r)$ must receive at step $i$ and point back to $r$.
+Both endpoints compute the partner with \cref{eq:partner}, so $q=\pi_i(r)$ must receive at step $i$ and point back to $r$.
 Let $k=s-i$.
 Rank $r$ sends at step $i>i_r$, i.e., when $k<u(r)$, so the $k+1$ low bits of $\nbr{r}$ are equal.
 The mask flips the $k$ lowest of them and leaves bit $k$ alone, so $\nbr{q}$ has a run of exactly $k$ bits: $u(q)=k$ and $i_q=i$.
@@ -369,23 +369,23 @@ XOR with $M_i$ is an involution, hence $\pi_i(q)=r$.
 The converse is the same argument read backwards, and the root is the case $\nbr{r}=0$.
 
 \paragraph{Identifying the Bine tree (\ref{inv:xor}).}
-Invariants (\ref{inv:once})--(\ref{inv:root}) are also satisfied by any binomial tree, so they do not identify the Bine tree, but (\ref{inv:xor}) does.
-It is the defining equation of the partner, Eq.~\eqref{eq:partner}, rewritten as $\nbr{r}\oplus\nbr{\pi_i(r)}=M_i$, and it holds for the receive peer as well, since the parent of $r$ is $\pi_{i_r}(r)$ and XOR is symmetric.
-It is stated on the virtual ranks because the root-$t$ schedule is the root-$0$ schedule relabeled by the rotation.
+Invariants (\ref{inv:once})--(\ref{inv:root}) are also satisfied by any binomial tree, so they do not identify the \bine{} tree, but (\ref{inv:xor}) does.
+It is the defining equation of the partner, \cref{eq:partner}, rewritten as $\nbr{r}\oplus\nbr{\pi_i(r)}=M_i$, and it holds for the receive peer as well, since the parent of $r$ is $\pi_{i_r}(r)$ and XOR is symmetric.
+It is stated on the virtual ranks because the root-$t$ schedule is the root-$0$ schedule relabelled by the rotation.
 For given $r$ and $i$ it admits exactly one peer, because XOR with $M_i$ and $\ntr$ are bijections.
-Hence the tables coincide with those defined by Eq.~\eqref{eq:partner}, and they inherit the properties of the Bine tree discussed in Sec.~\ref{sec:bg-bine}, in particular the distance between communicating ranks.
+Hence the tables coincide with those defined by \cref{eq:partner}, and they inherit the properties of the \bine{} tree discussed in \cref{sec:bg-bine}, in particular the distance between communicating ranks.
 
 \subsection{Scope and limits}
 
 The tests are exhaustive over all (root, rank) pairs for every power of two $p\le 2^{12}$, with a cost of $O(p^2 s)$ lookups per value of $p$.
 Beyond this range, correctness relies on the arguments of this section, not on testing.
-The test of (\ref{inv:xor}) uses the same conversion $\rtn$ as the generator, so it checks that the tables realize the defining equation. The independent check of the construction as a whole comes from the structural invariants (\ref{inv:once})--(\ref{inv:root}).
+The test of (\ref{inv:xor}) uses the same conversion $\rtn$ as the generator, so it checks that the tables realise the defining equation. The independent check of the construction as a whole comes from the structural invariants (\ref{inv:once})--(\ref{inv:root}).
 
 %==============================================================================
 \section{Experimental results}\label{sec:tree-results}
 
 % Requires: graphicx
-This section compares the Bine broadcast and reduce of Sec.~\ref{sec:tree-collectives} with the native \nccl{} ring (Chapter~\ref{ch:nccl}), under the \texttt{SIMPLE} and \texttt{LL} protocols.
+This section compares the \bine{} broadcast and reduce of \cref{sec:tree-collectives} with the native \nccl{} ring (\cref{ch:nccl}), under the \texttt{SIMPLE} and \texttt{LL} protocols.
 
 \paragraph{Setup.}
 Experiments run on the MeluXina supercomputer (see the acknowledgments), on nodes with four NVIDIA A100 GPUs connected by NVLink.
@@ -393,69 +393,69 @@ We use $p\in\{4,8,16,32,64,128\}$ ranks (one to 32 nodes, one rank per GPU), mes
 Each point is the median latency of 40 measured iterations, after 10 warmup iterations.
 Both axes of the figures are logarithmic.
 Since a node holds four GPUs, $p=4$ is entirely intra-node, and every larger $p$ also uses the inter-node network.
-\texttt{LL128} is not measured: it relies on $128$-byte stores being delivered atomically and in order, it is usually adopted on nv-linked intra-node communication (Sec.~\ref{sec:nccl-protocols}), and \nccl{} does not enable it on this system, unless forcing it with NCCL\_PROTO=LL128, beyond the single-node case $p=4$, which would not give a comparison across scales.
+\texttt{LL128} is not measured: it relies on $128$-byte stores being delivered atomically and in order, it is usually adopted on nv-linked intra-node communication (\cref{sec:nccl-protocols}), and \nccl{} does not enable it on this system, unless forcing it with NCCL\_PROTO=LL128, beyond the single-node case $p=4$, which would not give a comparison across scales.
 
 \begin{figure}[H]
   \centering
   \includegraphics[width=\linewidth]{assets/plots/Bcast_SIMPLE_Ranks.png}
-  \caption{Broadcast: median latency versus number of ranks, Bine (blue) against ring (red), for six message sizes. Solid lines with filled markers: \texttt{SIMPLE} protocol. Dashed lines with hollow markers: \texttt{LL} protocol.}
+  \caption{Broadcast: median latency versus number of ranks, \bine{} (blue) against ring (red), for six message sizes. Solid lines with filled markers: \texttt{SIMPLE} protocol. Dashed lines with hollow markers: \texttt{LL} protocol.}
   \label{fig:tree-bcast}
 \end{figure}
 
 \begin{figure}[H]
   \centering
   \includegraphics[width=\linewidth]{assets/plots/Reduce_SIMPLE_Ranks.png}
-  \caption{Reduce: median latency versus number of ranks, Bine (blue) against ring (red), for six message sizes. Solid lines with filled markers: \texttt{SIMPLE} protocol. Dashed lines with hollow markers: \texttt{LL} protocol.}
+  \caption{Reduce: median latency versus number of ranks, \bine{} (blue) against ring (red), for six message sizes. Solid lines with filled markers: \texttt{SIMPLE} protocol. Dashed lines with hollow markers: \texttt{LL} protocol.}
   \label{fig:tree-reduce}
 \end{figure}
 
 \subsection{\texttt{SIMPLE} protocol}
 
-The solid lines of \emph{Broadcast} ~\cref{fig:tree-bcast} and \emph{Reduce} ~\cref{fig:tree-reduce} show the expected separation between $\bigO{p}$ and $\bigO{\log p}$ (Sec.~\ref{sec:bg-ring-vs-tree}).
-Up to 4\,MB the ring time grows almost linearly with $p$ (about $2\times$ per doubling), while the Bine time grows by a roughly constant increment per doubling.
-At $p=128$ Bine is faster by $5.9\times$, $6.5\times$, $5.5\times$, $4.8\times$ and $6\times$ at 1\,kB, 16\,kB, 256\,kB, 1\,MB and 4\,MB in the broadcast, and by $5.3\times$, $5.7\times$ and $4.9\times$ at 1\,kB, 16\,kB and 256\,kB, and by $3.4$--$3.5\times$ at 1\,MB and 4\,MB in the reduce.
-At $p=4$ the ring is faster for all sizes, and the crossover lies between 4 and 8 ranks: with so few ranks the tree has few steps to save, and $p=4$ is also the only configuration that stays on NVLink.
+The solid lines of \emph{Broadcast} ~\cref{fig:tree-bcast} and \emph{Reduce} ~\cref{fig:tree-reduce} show the expected separation between $\bigO{p}$ and $\bigO{\log p}$ (\cref{sec:bg-ring-vs-tree}).
+Up to 4\,MB the ring time grows almost linearly with $p$ (about $2\times$ per doubling), while the \bine{} time grows by a roughly constant increment per doubling.
+At $p=128$ \bine{} is faster by $5.9\times$, $6.5\times$, $5.5\times$, $4.8\times$ and $6\times$ at 1\,kB, 16\,kB, 256\,kB, 1\,MB and 4\,MB in the broadcast, and by $5.3\times$, $5.7\times$ and $4.9\times$ at 1\,kB, 16\,kB and 256\,kB, and by $3.4$--$3.5\times$ at 1\,MB and 4\,MB in the reduce.
+At $p=4$ the ring is faster for all sizes, and the crossover lies between $4$ and $8$ ranks: with so few ranks the tree has few steps to save, and $p=4$ is also the only configuration that stays on NVLink.
 The measurements do not separate the two effects.
 At $p=8$ the two algorithms are within a few percent in the reduce up to 4\,MB.
 
 At 64\,MB the operation is bandwidth-bound: every edge of the tree carries the whole buffer and the root forwards it $s$ times, whereas the pipelined ring moves each chunk once per link.
-Bine is therefore slower than the ring in the broadcast for $p\le64$ ($2\times$ at $p=4$, $1.2$--$1.5\times$ for $p=8$ to $64$) and on par at $p=128$.
+\bine{} is therefore slower than the ring in the broadcast for $p\le64$ ($2\times$ at $p=4$, $1.2$--$1.5\times$ for $p=8$ to $64$) and on par at $p=128$.
 In the reduce it is slower at every scale ($1.8$--$3.4\times$), since the root also reduces $s$ full buffers in sequence while the ring spreads the reduction over all ranks.
 Both algorithms jump sharply between $p=4$ and $p=8$, the cost of leaving NVLink for the network.
 
 \subsection{\texttt{LL} protocol}\label{sec:tree-ll}
 
-\texttt{LL} trades bandwidth for latency (Sec.~\ref{sec:nccl-protocols}): half of the bytes it moves are flags.
-The dashed lines of Figures~\ref{fig:tree-bcast} and~\ref{fig:tree-reduce} show that it helps both algorithms at small sizes, but degrades Bine much earlier and much more than the ring.
+\texttt{LL} trades bandwidth for latency (\cref{sec:nccl-protocols}): half of the bytes it moves are flags.
+The dashed lines of \cref{fig:tree-bcast,fig:tree-reduce} show that it helps both algorithms at small sizes, but degrades \bine{} much earlier and much more than the ring.
 
 \paragraph{Small messages.}
 Up to 16\,kB the picture is that of \texttt{SIMPLE} at lower absolute times.
-At $p=128$ Bine is $4.4\times$ (broadcast) and $3.1\times$ (reduce) faster than the ring at 1\,kB and $4.9\times$ at 16\,kB, and Bine itself is $2.6\times$ and $1.4\times$ faster than with \texttt{SIMPLE} in the broadcast, at 1\,kB and 16\,kB respectively.
-At small $p$ the ring is still better: at $p=4$ for all sizes, and at $p=8$ at 16\,kB (by $37\%$ in the broadcast and $27\%$ in the reduce).
+At $p=128$ \bine{} is $4.4\times$ (broadcast) and $3.1\times$ (reduce) faster than the ring at 1\,kB and $4.9\times$ at 16\,kB, and \bine{} itself is $2.6\times$ and $1.4\times$ faster than with \texttt{SIMPLE} in the broadcast, at 1\,kB and 16\,kB respectively.
+At small $p$ the ring is still better: at $p=4$ for all sizes, and at $p=8$ at 16\,kB (by $37\,\%$ in the broadcast and $27\,\%$ in the reduce).
 
 \paragraph{Large messages.}
-Above 16\,kB Bine scales worse than the ring.
-At 64\,MB the ring is almost flat in $p$ (from 15.3 to 17.1\,ms in the broadcast between $p=8$ and $128$, about 4\,GB/s), while Bine grows from 69.6 to 367.7\,ms (from about 1.0 to 0.18\,GB/s), becoming $21.5\times$ slower in the broadcast and about $18\times$ in the reduce at $p=128$.
+Above 16\,kB \bine{} scales worse than the ring.
+At 64\,MB the ring is almost flat in $p$ (from 15.3 to 17.1\,ms in the broadcast between $p=8$ and $128$, about 4\,GB/s), while \bine{} grows from 69.6 to 367.7\,ms (from about 1.0 to 0.18\,GB/s), becoming $21.5\times$ slower in the broadcast and about $18\times$ in the reduce at $p=128$.
 This is expected.
 \texttt{LL} sustains a much lower bandwidth than \texttt{SIMPLE}, and the ring is the more bandwidth-efficient algorithm: each byte crosses each link once, while in the tree the root and the internal ranks send the buffer up to $s$ times, so the algorithm that moves more data pays more for the lower bandwidth.
-For $p\ge8$ and 64\,MB the ring is slowed down by \texttt{LL} by $1.8$--$6.3\times$ with respect to \texttt{SIMPLE}, but Bine by $15$--$41\times$.
-In addition, an intermediate rank of the ring uses the fused \texttt{directRecvCopyDirectSend} (Sec.~\ref{sec:nccl-primitives}): it receives and forwards the same data in a single pass (under \texttt{LL}, which has no zero-copy path, this is the staged \texttt{recvCopySend}), so every rank receives and sends at the same time and a chunk streams through the ring. In Bine, instead, a rank either receives or sends at each step (fans $\langle1,0\rangle$ and $\langle0,1\rangle$, Sec.~\ref{sec:tree-collectives}), with separate operations, so each hop of the tree is store-and-forward at the granularity of a chunk and no rank uses its receive and send directions simultaneously.
+For $p\ge8$ and 64\,MB the ring is slowed down by \texttt{LL} by $1.8$--$6.3\times$ with respect to \texttt{SIMPLE}, but \bine{} by $15$--$41\times$.
+In addition, an intermediate rank of the ring uses the fused \texttt{directRecvCopyDirectSend} (\cref{sec:nccl-primitives}): it receives and forwards the same data in a single pass (under \texttt{LL}, which has no zero-copy path, this is the staged \texttt{recvCopySend}), so every rank receives and sends at the same time and a chunk streams through the ring. In \bine{}, instead, a rank either receives or sends at each step (fans $\langle1,0\rangle$ and $\langle0,1\rangle$, \cref{sec:tree-collectives}), with separate operations, so each hop of the tree is store-and-forward at the granularity of a chunk and no rank uses its receive and send directions simultaneously.
 The slowdown follows the number of steps: at $p=4$ it is $2.1\times$ in the broadcast, about $s=2$, and it grows with $p$.
 
 \paragraph{Crossover between \texttt{LL} and \texttt{SIMPLE}.}
-As a consequence, \texttt{SIMPLE} overtakes \texttt{LL} much earlier for Bine than for the ring (Table~\ref{tab:tree-ll-cross}): between 16 and 256\,kB for every $p\ge8$ for Bine, against between 256\,kB and 1\,MB at $p=8$ and between 4 and 64\,MB for $p\ge32$ for the ring.
+As a consequence, \texttt{SIMPLE} overtakes \texttt{LL} much earlier for \bine{} than for the ring (\cref{tab:tree-ll-cross}): between 16 and 256\,kB for every $p\ge8$ for \bine{}, against between 256\,kB and 1\,MB at $p=8$ and between 4 and 64\,MB for $p\ge32$ for the ring.
 The two collectives have the same crossover sizes.
 
 \begin{table}[t]
 \centering
 \small
-\caption{Largest measured message size for which \texttt{LL} is faster than \texttt{SIMPLE}. The crossover lies between this size and the next measured one (1\,kB, 16\,kB, 256\,kB, 1\,MB, 4\,MB, 64\,MB). The Bine and ring entries are the same for broadcast and reduce. The allgather (ring only, Fig.~\ref{fig:tree-allgather}) was measured up to $p=32$, a dash means not measured.}
+\caption{Largest measured message size for which \texttt{LL} is faster than \texttt{SIMPLE}. The crossover lies between this size and the next measured one (1\,kB, 16\,kB, 256\,kB, 1\,MB, 4\,MB, 64\,MB). The \bine{} and ring entries are the same for broadcast and reduce. The allgather (ring only, \cref{fig:tree-allgather}) was measured up to $p=32$, a dash means not measured.}
 \label{tab:tree-ll-cross}
 \begin{tabular}{@{}l cccccc@{}}
 \toprule
  & $p=4$ & $8$ & $16$ & $32$ & $64$ & $128$ \\
 \midrule
-Bine (broadcast, reduce) & 1\,MB & 16\,kB  & 16\,kB & 16\,kB & 16\,kB & 16\,kB \\
+\bine{} (broadcast, reduce) & 1\,MB & 16\,kB  & 16\,kB & 16\,kB & 16\,kB & 16\,kB \\
 Ring (broadcast, reduce) & 4\,MB & 256\,kB & 1\,MB  & 4\,MB  & 4\,MB  & 4\,MB  \\
 Ring (allgather) & 1\,MB & 16\,kB & 16\,kB & 16\,kB & -- & -- \\
 \bottomrule
@@ -463,10 +463,10 @@ Ring (allgather) & 1\,MB & 16\,kB & 16\,kB & 16\,kB & -- & -- \\
 \end{table}
 
 \paragraph{Why the crossover differs: the ring allgather as a control.}\label{sec:tree-ll-allgather}
-Table~\ref{tab:tree-ll-cross} shows that the ring is not intrinsically tolerant of \texttt{LL}: the ring allgather (Fig.~\ref{fig:tree-allgather}) switches to \texttt{SIMPLE} at the same sizes as Bine, at 16\,kB for every $p\ge8$ and at 1\,MB for $p=4$, and the ring with \texttt{LL} is slower than with \texttt{SIMPLE} from 256\,kB on at $p\ge8$ and from 4\,MB on at $p=4$.
+\cref{tab:tree-ll-cross} shows that the ring is not intrinsically tolerant of \texttt{LL}: the ring allgather (\cref{fig:tree-allgather}) switches to \texttt{SIMPLE} at the same sizes as \bine{}, at 16\,kB for every $p\ge8$ and at 1\,MB for $p=4$, and the ring with \texttt{LL} is slower than with \texttt{SIMPLE} from 256\,kB on at $p\ge8$ and from 4\,MB on at $p=4$.
 Same protocols, same transport and same ring, but a different crossover from the ring broadcast and reduce.
-The difference is therefore due to the algorithm, and the latency--bandwidth model of Table~\ref{tab:bg-cost} explains it.
-The size on the axis of Fig.~\ref{fig:tree-allgather} is that of the block contributed by each rank, so $n=p\,m$ in the notation of Table~\ref{tab:notation}.
+The difference is therefore due to the algorithm, and the latency--bandwidth model of \cref{tab:bg-cost} explains it.
+The size on the axis of \cref{fig:tree-allgather} is that of the block contributed by each rank, so $n=p\,m$ in the notation of \cref{tab:notation}.
 
 \begin{figure}[H]
   \centering
@@ -481,38 +481,38 @@ The ring allgather and the tree broadcast have the same form: a number of steps,
   T_{\text{allgather}}=(p-1)\,(\alpha+m\beta),\qquad T_{\text{tree}}=s\,(\alpha+n\beta).
 \end{equation}
 For such an algorithm \texttt{LL} wins if $m<m^\ast=(\alpha_S-\alpha_L)/(\beta_L-\beta_S)$, and the number of steps cancels: both the latency saved and the bandwidth lost are paid at every step, so the crossover does not depend on $p$.
-This is what we observe for the ring allgather and for Bine, whose crossover stays at 16\,kB from $p=8$ to $p=32$ (to the resolution of our size grid).
-Expanding Eq.~\eqref{eq:bg-ring-bcast}, the pipelined ring broadcast has instead $T=(p+k-2)\,\alpha+n\beta+(p-2)\tfrac{n}{k}\beta$: the bandwidth cost of the vector is paid essentially once, because the chunks are amortized over the steps. Choosing $k$ near $k^\ast$ keeps the remaining terms small, so to first order the dependence on $p$ is the latency term $(p-2)\alpha$.
-\texttt{LL} then saves about $(p-2)(\alpha_S-\alpha_L)$ and loses about $n(\beta_L-\beta_S)$, so the crossover $n^\ast$ grows with $p$, as in the ring row of Table~\ref{tab:tree-ll-cross} (256\,kB at $p=8$, 4\,MB from $p=32$).
+This is what we observe for the ring allgather and for \bine{}, whose crossover stays at 16\,kB from $p=8$ to $p=32$ (to the resolution of our size grid).
+Expanding \cref{eq:bg-ring-bcast}, the pipelined ring broadcast has instead $T=(p+k-2)\,\alpha+n\beta+(p-2)\tfrac{n}{k}\beta$: the bandwidth cost of the vector is paid essentially once, because the chunks are amortised over the steps. Choosing $k$ near $k^\ast$ keeps the remaining terms small, so to first order the dependence on $p$ is the latency term $(p-2)\alpha$.
+\texttt{LL} then saves about $(p-2)(\alpha_S-\alpha_L)$ and loses about $n(\beta_L-\beta_S)$, so the crossover $n^\ast$ grows with $p$, as in the ring row of \cref{tab:tree-ll-cross} (256\,kB at $p=8$, 4\,MB from $p=32$).
 The same holds for the reduce, which adds $\tfrac{n}{k}\gamma$ per step and no new term in $p$.
-To first order, then, the ring does not tolerate \texttt{LL} better than Bine because it is a ring, but because in the broadcast and in the reduce the chunks hide the bandwidth cost, while a collective in which every step moves a full block, like the allgather, does not.
+To first order, then, the ring does not tolerate \texttt{LL} better than \bine{} because it is a ring, but because in the broadcast and in the reduce the chunks hide the bandwidth cost, while a collective in which every step moves a full block, like the allgather, does not.
 
 \paragraph{The remaining gap: stepwise primitives.}
-The allgather also gives the reference for the slowdown at 64\,MB, where the time is entirely bandwidth determined. Without amortization, but with the fused primitive streaming through the ring, a ring with \texttt{LL} is about $9\times$ slower than with \texttt{SIMPLE} for $p\ge8$ (and about $2.5\times$ at $p=4$, which stays on NVLink).
-Bine is slower than this, $15$--$41\times$ for $p\ge8$, and the excess grows with $p$.
-This part is not explained by the model of Table~\ref{tab:bg-cost} alone. It is an effect of how the tree kernel is built: at every step and for every chunk a new \texttt{Primitives} object is constructed with fans $\langle1,0\rangle$ (receive from the parent) or $\langle0,1\rangle$ (send to one child), so the tree is traversed as a sequence of separate point-to-point operations.
+The allgather also gives the reference for the slowdown at 64\,MB, where the time is entirely bandwidth determined. Without amortisation, but with the fused primitive streaming through the ring, a ring with \texttt{LL} is about $9\times$ slower than with \texttt{SIMPLE} for $p\ge8$ (and about $2.5\times$ at $p=4$, which stays on NVLink).
+\bine{} is slower than this, $15$--$41\times$ for $p\ge8$, and the excess grows with $p$.
+This part is not explained by the model of \cref{tab:bg-cost} alone. It is an effect of how the tree kernel is built: at every step and for every chunk a new \texttt{Primitives} object is constructed with fans $\langle1,0\rangle$ (receive from the parent) or $\langle0,1\rangle$ (send to one child), so the tree is traversed as a sequence of separate point-to-point operations.
 In the broadcast an internal rank first receives the chunk and then sends it to its children one step at a time. In the reduce it receives from its children one step at a time and sends the result up at the end.
-Each hop is therefore store-and-forward, a rank never receives and sends at the same time (Sec.~\ref{sec:tree-ll}, large messages), and the cost of setting up the primitive is paid at every step and chunk.
+Each hop is therefore store-and-forward, a rank never receives and sends at the same time (\cref{sec:tree-ll}, large messages), and the cost of setting up the primitive is paid at every step and chunk.
 The ring, instead, builds one primitive per kernel and each byte streams through the fused \texttt{recvCopySend}, so the lower bandwidth of \texttt{LL} is paid once.
 A fused tree kernel would build a single \texttt{Primitives} per rank with $\texttt{FanAsymmetric}\langle1,D\rangle$ in the broadcast ($\langle D,1\rangle$ in the reduce), where $D$ is the maximum number of children, receive once and forward to all children in one operation, so that a chunk streams through the tree and the setup is paid once. % TODO: add measurements of the fused kernel
-In summary, the early crossover of Bine is the algorithmic cost of a collective without amortization, shared with the ring allgather, and the additional slowdown at large sizes is due to the stepwise, store-and-forward structure of the kernel.
+In summary, the early crossover of \bine{} is the algorithmic cost of a collective without amortisation, shared with the ring allgather, and the additional slowdown at large sizes is due to the stepwise, store-and-forward structure of the kernel.
 
 \paragraph{Effect on the speedup.}
-If each algorithm uses its best protocol (Table~\ref{tab:tree-best}), Bine remains faster than the ring at $p=128$ for all sizes except the 64\,MB reduce, where the ring is $1.8\times$ faster, in the 64\,MB broadcast the two are on par.
-The margin at medium sizes is smaller than with \texttt{SIMPLE} alone, since the ring can use \texttt{LL} up to 4\,MB while Bine cannot, but it remains significant: at 1--4\,MB the speedup goes from $4.6$--$6.5\times$ to $1.3$--$1.6\times$, and it reaches $5\times$ at 16\,kB.
-At $p=8$ the ring with \texttt{LL} is ahead of Bine up to 256\,kB, by at most $1.18\times$ in the broadcast and $1.09\times$ in the reduce, while Bine is faster at 1\,MB and, in the broadcast, at 4\,MB.
+If each algorithm uses its best protocol (\cref{tab:tree-best}), \bine{} remains faster than the ring at $p=128$ for all sizes except the 64\,MB reduce, where the ring is $1.8\times$ faster, in the 64\,MB broadcast the two are on par.
+The margin at medium sizes is smaller than with \texttt{SIMPLE} alone, since the ring can use \texttt{LL} up to 4\,MB while \bine{} cannot, but it remains significant: at 1--4\,MB the speedup goes from $4.6$--$6.5\times$ to $1.3$--$1.6\times$, and it reaches $5\times$ at 16\,kB.
+At $p=8$ the ring with \texttt{LL} is ahead of \bine{} up to 256\,kB, by at most $1.18\times$ in the broadcast and $1.09\times$ in the reduce, while \bine{} is faster at 1\,MB and, in the broadcast, at 4\,MB.
 At 64\,MB the best protocol is \texttt{SIMPLE} for both algorithms, so the choice of protocol does not change the comparison.
 
 \begin{table}[t]
 \centering
 \small
-\caption{Best protocol of each algorithm and speedup of Bine over the ring, both with their best protocol, at $p=128$. A value below $1$ means that the ring is faster.}
+\caption{Best protocol of each algorithm and speedup of \bine{} over the ring, both with their best protocol, at $p=128$. A value below $1$ means that the ring is faster.}
 \label{tab:tree-best}
 \begin{tabular}{@{}r ccc @{\qquad} ccc@{}}
 \toprule
  & \multicolumn{3}{c}{Broadcast} & \multicolumn{3}{c}{Reduce} \\
 \cmidrule(lr){2-4}\cmidrule(l){5-7}
-Size & Bine & Ring & Speedup & Bine & Ring & Speedup \\
+Size & \bine{} & Ring & Speedup & \bine{} & Ring & Speedup \\
 \midrule
 1\,kB   & \texttt{LL}     & \texttt{LL}     & $4.4\times$ & \texttt{LL}     & \texttt{LL}     & $3.1\times$ \\
 16\,kB  & \texttt{LL}     & \texttt{LL}     & $4.9\times$ & \texttt{LL}     & \texttt{LL}     & $4.9\times$ \\
@@ -526,7 +526,7 @@ Size & Bine & Ring & Speedup & Bine & Ring & Speedup \\
 
 \subsection{Summary}
 
-With \texttt{SIMPLE}, Bine is the better choice for small and medium messages (up to a few MB) from 8 ranks on, with speedups of $3.4$--$6.5\times$ at 128 ranks and logarithmic scaling, while for 64\,MB the ring is better or equal, the reduce being the worse case. At $p=4$ the ring always wins, but this configuration is entirely intra-node and not representative.
-\texttt{LL} helps Bine only up to 16\,kB, where it is up to $4.9\times$ faster than the ring at 128 ranks.
-Above that the ring, being more bandwidth-efficient, keeps benefiting from \texttt{LL} up to 4\,MB while Bine must switch to \texttt{SIMPLE} (the ring allgather, which has no chunk amortization, switches as early as Bine, so the early crossover is algorithmic, and the extra slowdown of Bine at large sizes is the fan-out and fan-in of the tree), so with each algorithm at its best protocol the advantage at 1--4\,MB falls to $1.1$--$1.7\times$, and at $p=8$ it vanishes below 1\,MB.
-This motivates the bandwidth-optimal butterfly-style algorithms of Chapter~\ref{ch:butterfly}, and a selection rule based on message size, number of ranks and protocol, not on the algorithm alone.
+With \texttt{SIMPLE}, \bine{} is the better choice for small and medium messages (up to a few MB) from $8$ ranks on, with speedups of $3.4$--$6.5\times$ at $128$ ranks and logarithmic scaling, while for 64\,MB the ring is better or equal, the reduce being the worse case. At $p=4$ the ring always wins, but this configuration is entirely intra-node and not representative.
+\texttt{LL} helps \bine{} only up to 16\,kB, where it is up to $4.9\times$ faster than the ring at $128$ ranks.
+Above that the ring, being more bandwidth-efficient, keeps benefiting from \texttt{LL} up to 4\,MB while \bine{} must switch to \texttt{SIMPLE} (the ring allgather, which has no chunk amortisation, switches as early as \bine{}, so the early crossover is algorithmic, and the extra slowdown of \bine{} at large sizes is the fan-out and fan-in of the tree), so with each algorithm at its best protocol the advantage at 1--4\,MB falls to $1.1$--$1.7\times$, and at $p=8$ it vanishes below 1\,MB.
+This motivates the bandwidth-optimal butterfly-style algorithms of \cref{ch:butterfly}, and a selection rule based on message size, number of ranks and protocol, not on the algorithm alone.

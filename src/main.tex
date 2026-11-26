@@ -44,6 +44,7 @@
 \tableofcontents
 \listoffigures
 \listoftables
+\listofalgorithms   % the algorithms are numbered and cross-referenced like the other floats
 \input{src/frontmatter/acronyms}
 
 % ---------------------------------------------------------------------------
@@ -51,18 +52,18 @@
 % ---------------------------------------------------------------------------
 \mainmatter
 
-% Introduction and related work are written last (they "come naturally").
-\input{src/sections/01-introduction}
-\input{src/sections/02-background}
-\input{src/sections/03-nccl}
+% Related work is written last (it "comes naturally"). The abstract stands in
+% for a separate introduction chapter.
+\input{src/sections/01-background}
+\input{src/sections/02-nccl}
 
 % Implementation (the core of the thesis)
-\input{src/sections/04-tree-bine}
-\input{src/sections/05-butterfly-bine}
-\input{src/sections/06-PAT-based-implementation}
-\input{src/sections/07-tree-based-allreduce}
-\input{src/sections/08-software}
-\input{src/sections/09-conclusion}
+\input{src/sections/03-tree-bine}
+\input{src/sections/04-butterfly-bine}
+\input{src/sections/05-PAT-based-implementation}
+\input{src/sections/06-tree-based-allreduce}
+\input{src/sections/07-software}
+\input{src/sections/08-conclusion}
 
 % ---------------------------------------------------------------------------
 % Back matter

@@ -246,7 +246,7 @@ Its sizes are converted so that both tools refer to the same per-rank buffer, an
 A sweep is described by the collectives, algorithms, protocols and rank counts to measure.
 For each rank count, the CLI submits one Slurm job, sized from the configuration of the machine (GPUs per node, partition, account and modules, stored in a per-user JSON file with presets for MeluXina and Leonardo), through \texttt{submitit}, and follows the jobs in a live terminal dashboard from which they can be cancelled.
 For \nccl{}'s native \pat{}, which only runs with one GPU per node, the jobs are automatically placed one rank per node, and their results are merged into the same files as the others.
-When the algorithm is \bine{}, the sweep crosses the variants (tree, butterfly, \pat{}) with the buffer-management strategies (block by block, permutation, send, double send) of \cref{ch:butterfly,ch:pat}, skipping the combinations that do not exist (the tree has a single strategy, and the tree and \bine{}-\pat{} have no \texttt{LL} implementation).
+When the algorithm is \bine{}, the sweep crosses the variants (tree, butterfly, \pat{}) with the buffer-management strategies (send, permute, block-by-block, double send) of \cref{ch:butterfly,ch:pat}, skipping the combinations that do not exist (the tree has a single strategy, and the tree and \bine{}-\pat{} have no \texttt{LL} implementation).
 
 \paragraph{Results and profiling.}
 The results are stored as one CSV file per collective and protocol under a directory per rank count, with one row per algorithm, configuration and size holding the statistics of that point (mean, median, standard deviation, minimum and maximum, plus the per-iteration statistics of \texttt{unitccl\_bench}).

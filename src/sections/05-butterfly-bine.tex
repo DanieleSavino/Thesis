@@ -39,7 +39,7 @@ void ncclGetBineButterflyDdbl(int nRanks, int steps,
                               int *partners, int *index, int *order);
 \end{verbatim}
 which writes \texttt{partners} (the table $\Pi$), \texttt{index} (the vector $\nu$) and \texttt{order} (the vector $\nu^{-1}$).
-Step $i$ is the $i$-th step of the reduce-scatter, where the distance between partners grows; the allgather is its reverse.
+Step $i$ is the $i$-th step of the reduce-scatter, where the distance between partners grows. The allgather is its reverse.
 
 \subsection{Definition}\label{sec:bfly-def}
 
@@ -130,7 +130,7 @@ $\mathrm{pos}(r)$ & 0 & 4 & 6 & 1 & 3 & 7 & 5 & 2 \\
 \subsection{Computing the tables}
 
 \Cref{alg:bfly-schedule} computes the three arrays.
-The labels are computed first and $\nu^{-1}$ is obtained by inverting them; then the partners are computed one step at a time, accumulating $\rho_i$ in a 64-bit integer and reducing it modulo $p$ with a non-negative result.
+The labels are computed first and $\nu^{-1}$ is obtained by inverting them. Then the partners are computed one step at a time, accumulating $\rho_i$ in a 64-bit integer and reducing it modulo $p$ with a non-negative result.
 The cost is $O(p\log p)$ time and memory.
 
 \begin{algorithm}[t]
@@ -157,11 +157,11 @@ The cost is $O(p\log p)$ time and memory.
 %==============================================================================
 \section{Allgather, reduce-scatter and allreduce}\label{sec:bfly-collectives}
 
-The table says who communicates with whom; which data moves is decided by the collective.
+The table says who communicates with whom. Which data moves is decided by the collective.
 \begin{itemize}
   \item \emph{Allgather.} Each rank contributes a block of \texttt{count} elements and obtains the $p$ blocks, the block of rank $b$ at offset $b\cdot\texttt{count}$ of \texttt{recvbuff}.
   \item \emph{Reduce-scatter.} Each rank holds $p$ blocks, and rank $b$ obtains the reduction of the blocks $b$ of all the ranks.
-  \item \emph{Allreduce.} Each rank obtains the elementwise reduction of the vectors of all the ranks; it is a reduce-scatter followed by an allgather (\cref{sec:bfly-allreduce}).
+  \item \emph{Allreduce.} Each rank obtains the elementwise reduction of the vectors of all the ranks. It is a reduce-scatter followed by an allgather (\cref{sec:bfly-allreduce}).
 \end{itemize}
 
 \subsection{Integration in \nccl{}}
@@ -185,7 +185,7 @@ The reduce-scatter is the time reverse: step $i$ uses $\Pi(r,i)$, and the data h
 Let $x=\mathrm{pos}(r)$ and $y=\mathrm{pos}(q)$ for $q=\Pi(r,s-1-k)$.
 Bit $b$ of $\nu$ is bit $s-1-b$ of $\mathrm{pos}$, so invariant~\ref{inv:bfly-split} with $i=s-1-k$ says that $x$ and $y$ agree above bit $k$ and differ at bit $k$.
 Hence the $g$ blocks held at step $k$ are those whose positions lie in the aligned range of size $g$ containing $x$, and the blocks of the partner lie in the sibling range (\cref{fig:bfly-held}).
-In the position space the pattern is a recursive-doubling allgather; in the rank space, the blocks of an aligned range are the ranks $\nu^{-1}(\mathrm{rev}(y))$, which are in general not contiguous.
+In the position space the pattern is a recursive-doubling allgather. In the rank space, the blocks of an aligned range are the ranks $\nu^{-1}(\mathrm{rev}(y))$, which are in general not contiguous.
 
 \begin{figure}[t]
 \centering
@@ -204,7 +204,7 @@ In the position space the pattern is a recursive-doubling allgather; in the rank
   \node[anchor=west] at (7.7,-2) {$q=7$ (pos.\ 2)};
   \node[anchor=west] at (7.7,-3) {$q=1$ (pos.\ 4)};
 \end{tikzpicture}
-\caption{Blocks held by rank $0$ (position $0$) during the allgather with $p=8$. Cell $y$ is a position; $r$ is the rank whose block it contains, $\nu^{-1}(\mathrm{rev}(y))$. The held positions (shaded) always form an aligned range, whereas the held ranks $\{0\}$, $\{0,3\}$, $\{0,3,7,4\}$ are not contiguous. The right column is the partner at each step.}
+\caption{Blocks held by rank $0$ (position $0$) during the allgather with $p=8$. Cell $y$ is a position. $r$ is the rank whose block it contains, $\nu^{-1}(\mathrm{rev}(y))$. The held positions (shaded) always form an aligned range, whereas the held ranks $\{0\}$, $\{0,3\}$, $\{0,3,7,4\}$ are not contiguous. The right column is the partner at each step.}
 \label{fig:bfly-held}
 \end{figure}
 
@@ -230,14 +230,14 @@ In the reduce-scatter the last receive writes the reduced block directly in \tex
 \centering
 \footnotesize
 \setlength{\tabcolsep}{4pt}
-\caption{The strategies as choices of slot, pre-step and post-step. Send, permute and block-by-block use the distance-doubling table (reversed in the allgather); double send uses the distance-halving one. Copies are fused as described in the text.}
+\caption{The strategies as choices of slot, pre-step and post-step. Send, permute and block-by-block use the distance-doubling table (reversed in the allgather). Double send uses the distance-halving one. Copies are fused as described in the text.}
 \label{tab:bfly-strategies}
 \begin{tabularx}{\linewidth}{@{}l l X X l@{}}
 \toprule
 Strategy & Slot of $y$ & Allgather & Reduce-scatter & Unit \\
 \midrule
 Send & $y$ & pre: exchange with $\nu^{-1}(\mathrm{rev}(r))$ & post: same exchange & run \\
-Permute & $y$ & pre: copy to slot $\mathrm{pos}(r)$; post: permutation & pre: permutation; post: copy slot $\mathrm{pos}(r)$ & run \\
+Permute & $y$ & pre: copy to slot $\mathrm{pos}(r)$, post: permutation & pre: permutation, post: copy slot $\mathrm{pos}(r)$ & run \\
 Block-by-block & $\nu^{-1}(\mathrm{rev}(y))$ & pre: copy to slot $r$ & post: copy slot $r$ & block \\
 Double send & circular window & pre: copy to slot $r$ & post: copy slot $r$ & $\le2$ runs \\
 \bottomrule
@@ -264,7 +264,7 @@ The condition depends only on values equal on all ranks and channels.
 The value of $S$ was determined experimentally: we swept it and measured, for each value, the latency of the strategies in both partitions.
 The two partitions cross at about $S=16\,\text{KiB}$ per channel, which is the default value.
 $S$ is a compile-time parameter: \texttt{BINE\_POS\_SLICE\_BYTES} is defined with this default only if it is not already defined, so it can be changed at build time (e.g., with \texttt{-DBINE\_POS\_SLICE\_BYTES=}$\langle\text{bytes}\rangle$) without touching the source, and the crossover can differ on other systems.
-Below it pos mode wins, since a contiguous run needs fewer calls than the strided pieces of slice mode (\cref{sec:bfly-res-modes}); above it the idle channels of pos mode cost more than the calls it saves, so slice mode wins.
+Below it pos mode wins, since a contiguous run needs fewer calls than the strided pieces of slice mode (\cref{sec:bfly-res-modes}). Above it the idle channels of pos mode cost more than the calls it saves, so slice mode wins.
 
 \begin{figure}[t]
 \centering
@@ -296,7 +296,7 @@ Below it pos mode wins, since a contiguous run needs fewer calls than the stride
       node[midway, below=4pt, align=center] {window of 4 positions:\\channels 2 and 3 move one contiguous run each};
   \end{scope}
 \end{tikzpicture}
-\caption{Work partition for $p=8$ blocks and four channels. In slice mode every block is cut among the channels; in pos mode each channel owns two whole blocks.}
+\caption{Work partition for $p=8$ blocks and four channels. In slice mode every block is cut among the channels. In pos mode each channel owns two whole blocks.}
 \label{fig:bfly-partition}
 \end{figure}
 
@@ -397,7 +397,7 @@ No transfer is larger than one chunk (\texttt{chunkCount} elements), so that eac
 How a window is cut depends on its layout in memory.
 \begin{itemize}
   \item \emph{Contiguous run.} If \texttt{channelCount}$=$\texttt{count} (one channel, or pos mode) and the slots are adjacent, the part of the window owned by the channel is one region of $n_B\cdot\texttt{count}$ elements, sent as $\lceil n_B\cdot\texttt{count}/\texttt{chunkCount}\rceil$ chunks, possibly across block boundaries.
-  This is the case of send and permute; in double send a window is at most two runs (\cref{sec:bfly-dhlv}).
+  This is the case of send and permute. In double send a window is at most two runs (\cref{sec:bfly-dhlv}).
   \item \emph{Strided transfers.} Otherwise the kernel issues one transfer per chunk and per block, $n_B\lceil\texttt{channelCount}/\texttt{chunkCount}\rceil$ in total.
   This is always the case of block-by-block, and of every strategy in slice mode when the slice does not cover whole blocks.
 \end{itemize}
@@ -408,7 +408,7 @@ The proxy must post as many FIFO steps as the kernel consumes, per channel, step
 Since every call consumes the FIFO steps of one chunk whatever the number of elements it moves, empty calls included (\cref{sec:nccl-fifo-cost}), the proxy only needs the number of calls, provided that no call moves more than one chunk (\cref{sec:bfly-fast}).
 With $n_B$ the number of blocks of a window owned by the channel, $c$ the chunk size and $c_c=\texttt{channelCount}$, a send or a receive of a window costs:
 \begin{itemize}
-  \item $n_B\lceil c_c/c\rceil$ calls in slice mode with $c_c<\texttt{count}$, and for block-by-block in every mode;
+  \item $n_B\lceil c_c/c\rceil$ calls in slice mode with $c_c<\texttt{count}$, and for block-by-block in every mode,
   \item $\lceil n_B\,\texttt{count}/c\rceil$ calls per contiguous run otherwise (summed over the at most two runs of a circular window).
 \end{itemize}
 The two directions are counted separately, since in pos mode a channel may send and not receive at a step.
@@ -422,7 +422,7 @@ The result is the whole vector, so there is no block to restore: after the reduc
 The exchange of \emph{send} cancels out, so the allreduce has no pre-step and no post-step and uses \emph{send} without the exchange.
 
 \paragraph{Layout.}
-The slice of the channel is processed in $L=\lceil\texttt{channelCount}/(pc)\rceil$ loops of $p$ chunks of $c$ elements; block $b$ of loop $l$ is the chunk at offset $\texttt{grid}+l\,pc+b\,c$.
+The slice of the channel is processed in $L=\lceil\texttt{channelCount}/(pc)\rceil$ loops of $p$ chunks of $c$ elements. Block $b$ of loop $l$ is the chunk at offset $\texttt{grid}+l\,pc+b\,c$.
 Chunks beyond the end of the slice are shorter or empty, and the calls are still issued so that both ends of an exchange match.
 The kernel first copies \texttt{sendbuff} into \texttt{recvbuff} when they differ, then works in place in \texttt{recvbuff}.
 
@@ -432,7 +432,7 @@ The price is $g\cdot L$ sends and as many receives at a step with a window of $g
 The proxy must derive the same chunk size.
 
 \paragraph{Kernel.}
-\Cref{alg:bfly-allreduce} shows the kernel; a rank skips a step when its partner is undefined or is itself, and the proxy applies the same condition.
+\Cref{alg:bfly-allreduce} shows the kernel. A rank skips a step when its partner is undefined or is itself, and the proxy applies the same condition.
 
 \begin{algorithm}[t]
 \caption{Bine allreduce, kernel of one channel.}
@@ -529,7 +529,7 @@ At step $0$ rank $0$ sends to rank $3$ the blocks $[2,5]$, which are those that 
 \end{figure}
 
 The allgather is the time reverse: it starts from $\{r\}$ and doubles the window at each step, reading the table from the last step to the first.
-It therefore moves the largest data over the longest distance, the opposite of the other strategies; this is the price of keeping the natural order without any pre-step or post-step.
+It therefore moves the largest data over the longest distance, the opposite of the other strategies. This is the price of keeping the natural order without any pre-step or post-step.
 
 \subsection{Kernels}
 
@@ -588,8 +588,8 @@ For every $p=2^s$, rank $r$ and step $i\in[0,s-1]$:
   The rank keeps the upper half if $r$ and $g$ have different parity, and the lower half otherwise, so $a_{i+1}(r)=(a_i(r)+2^g)\bmod p$ in the first case and $a_{i+1}(r)=a_i(r)$ in the second.
   Then, for $q=\Pi^{\mathrm{dh}}(r,i)$:
   \begin{enumerate}
-    \item[(a)] $a_i(q)=a_i(r)$: the partners hold the same window;
-    \item[(b)] the half sent by $r$ starts at $a_{i+1}(q)$: it is the half kept by the partner;
+    \item[(a)] $a_i(q)=a_i(r)$: the partners hold the same window,
+    \item[(b)] the half sent by $r$ starts at $a_{i+1}(q)$: it is the half kept by the partner,
     \item[(c)] after the last step, $a_s(r)=r$: the final window is $\{r\}$.
   \end{enumerate}
 \end{enumerate}
@@ -600,7 +600,7 @@ For every $p=2^s$, rank $r$ and step $i\in[0,s-1]$:
 \paragraph{Exchange structure (\ref{inv:bfly-sym})--(\ref{inv:bfly-full}), (\ref{inv:dh-sym})--(\ref{inv:dh-parity}).}
 Both tables use offsets that are always odd: $\rho_i=\rho_{i-1}+(-2)^i$ with $\rho_0=1$, and $\tau_i$ is the sum of $1$ and of even terms, so they stay odd modulo the even number $p$.
 An even rank adds the offset and an odd rank subtracts it, hence the partner of an even rank is odd, the partner of an odd rank is even (\ref{inv:dh-parity}), and no rank can be its own partner (\ref{inv:bfly-self}, \ref{inv:dh-self}).
-If $r$ is even and $q=r+m$, then $q$ is odd and its partner is $q-m=r$; the case of $r$ odd is symmetric.
+If $r$ is even and $q=r+m$, then $q$ is odd and its partner is $q-m=r$. The case of $r$ odd is symmetric.
 Hence the pairing is an involution (\ref{inv:bfly-sym}, \ref{inv:dh-sym}).
 Both formulas are defined for every rank, so no entry is empty (\ref{inv:bfly-full}, \ref{inv:dh-full}).
 At each step the ranks form $p/2$ pairs, sends and receives always match, and the kernels need no branch for ranks that skip a step, unlike the tree (\cref{sec:tree-testing}).
@@ -609,7 +609,7 @@ At each step the ranks form $p/2$ pairs, sends and receives always match, and th
 The conversion $\rtn$ maps a rank to an $s$-bit negabinary string by value modulo $p$.
 It is a bijection: two different strings, whose lowest differing bit is $j<s$, have values that differ by $2^j$ modulo $2^{j+1}$, hence modulo $p$.
 The least significant bit of $\rtn(x)$ is the parity of $x$.
-Odd ranks take $\rtn(r)$ and are mapped to $p/2$ distinct strings ending in $1$; even ranks take $\rtn(p-r)$, with $r=0$ taking the zero string, and are mapped to the $p/2$ distinct strings ending in $0$.
+Odd ranks take $\rtn(r)$ and are mapped to $p/2$ distinct strings ending in $1$. Even ranks take $\rtn(p-r)$, with $r=0$ taking the zero string, and are mapped to the $p/2$ distinct strings ending in $0$.
 So $h$ is a bijection onto the $s$-bit strings, and so is $x\mapsto x\oplus(x\gg1)$, which is the Gray code.
 Therefore no block is lost or stored twice, and $\nu^{-1}$ is well defined.
 
@@ -686,12 +686,12 @@ The two collectives behave in the same way.
 
 \begin{figure}[!tbp]
   \bflypair{AllGather_SIMPLE+LL_vs_ranks_by_size_bv-BUTTERFLY_bm-best.png}{ReduceScatter_SIMPLE+LL_vs_ranks_by_size_bv-BUTTERFLY_bm-best.png}{0.92}
-  \caption{Median latency versus number of ranks, \bine{} butterfly with its best strategy (blue) against the \nccl{} ring (red), for six block sizes. Solid lines with filled markers: \texttt{SIMPLE}; dashed lines with hollow markers: \texttt{LL}. Both axes are logarithmic.}
+  \caption{Median latency versus number of ranks, \bine{} butterfly with its best strategy (blue) against the \nccl{} ring (red), for six block sizes. Solid lines with filled markers: \texttt{SIMPLE}. Dashed lines with hollow markers: \texttt{LL}. Both axes are logarithmic.}
   \label{fig:bfly-scaling}
 \end{figure}
 
 In this implementation \bine{} wins only for small messages on many ranks.
-With \texttt{SIMPLE} on both sides it is faster than the ring in $8$ of the $30$ points of the allgather and $7$ of the reduce-scatter (1 and 16\,kB from $16$ and $8$ ranks respectively, plus 256\,kB on $64$ ranks in the allgather; \cref{fig:bfly-heatmap-simple}), but once the ring may use \texttt{LL} it is the fastest in only $3$ of the $60$ points (\cref{fig:bfly-heatmap-best}): at 1\,kB and $p=64$ it is $1.17\times$ (allgather) and $1.9\times$ (reduce-scatter) faster than the best ring, and $2.9$--$3.1\times$ faster than the ring with \texttt{SIMPLE}.
+With \texttt{SIMPLE} on both sides it is faster than the ring in $8$ of the $30$ points of the allgather and $7$ of the reduce-scatter (1 and 16\,kB from $16$ and $8$ ranks respectively, plus 256\,kB on $64$ ranks in the allgather, \cref{fig:bfly-heatmap-simple}), but once the ring may use \texttt{LL} it is the fastest in only $3$ of the $60$ points (\cref{fig:bfly-heatmap-best}): at 1\,kB and $p=64$ it is $1.17\times$ (allgather) and $1.9\times$ (reduce-scatter) faster than the best ring, and $2.9$--$3.1\times$ faster than the ring with \texttt{SIMPLE}.
 
 \begin{figure}[!tbp]
   \bflypair{AllGather_SIMPLE_best_algo_heatmap_bv-BUTTERFLY_bm-best.png}{ReduceScatter_SIMPLE_best_algo_heatmap_bv-BUTTERFLY_bm-best.png}{0.73}
@@ -705,7 +705,7 @@ With \texttt{SIMPLE} on both sides it is faster than the ring in $8$ of the $30$
 \setlength{\tabcolsep}{4pt}
 \renewcommand{\arraystretch}{1.1}
 \sisetup{table-format=1.2, detect-weight=true, mode=text}
-\caption{Median latency of the ring divided by that of the best \bine{} strategy, each with its best protocol, for the allgather and the reduce-scatter, with $p$ ranks. A value below $1$ means that the ring is faster; values above $1$ are in bold.}
+\caption{Median latency of the ring divided by that of the best \bine{} strategy, each with its best protocol, for the allgather and the reduce-scatter, with $p$ ranks. A value below $1$ means that the ring is faster. Values above $1$ are in bold.}
 \label{tab:bfly-best}
 \begin{tabular}{@{}l *{5}{S} @{\hspace{2em}} *{5}{S}@{}}
 \toprule
@@ -775,8 +775,8 @@ Of these factors, the cost of a call is the one that the design predicts to matt
 \label{fig:bfly-slots}
 \end{figure}
 
-The dashed lines of \cref{fig:bfly-scaling} show that \texttt{LL} is much worse for \bine{} than for the ring, as for the tree (\cref{sec:tree-ll}); this is consistent with the cost of a call above, since the chunk of \texttt{LL} is much smaller than that of \texttt{SIMPLE} (\cref{fig:nccl-grain}), so a block needs more calls and each of them still costs a full step.
-From 256\,kB on and $p\ge16$ \bine{} with \texttt{LL} is $6$--$29\times$ slower than the ring with \texttt{LL}; at 64\,MB and $p\ge8$ \texttt{LL} is $11.5$--$13.4\times$ slower than \texttt{SIMPLE} for \bine{}, against $2.6$--$3.5\times$ for the ring.
+The dashed lines of \cref{fig:bfly-scaling} show that \texttt{LL} is much worse for \bine{} than for the ring, as for the tree (\cref{sec:tree-ll}). This is consistent with the cost of a call above, since the chunk of \texttt{LL} is much smaller than that of \texttt{SIMPLE} (\cref{fig:nccl-grain}), so a block needs more calls and each of them still costs a full step.
+From 256\,kB on and $p\ge16$ \bine{} with \texttt{LL} is $6$--$29\times$ slower than the ring with \texttt{LL}. At 64\,MB and $p\ge8$ \texttt{LL} is $11.5$--$13.4\times$ slower than \texttt{SIMPLE} for \bine{}, against $2.6$--$3.5\times$ for the ring.
 As a consequence, \bine{} switches to \texttt{SIMPLE} at much smaller sizes (between 1 and 16\,kB for $p\ge32$, against between 16\,kB and 256\,kB for the ring).
 
 %------------------------------------------------------------------------------
@@ -793,7 +793,7 @@ This is what block-by-block always does, and it is what the other strategies fal
 \paragraph{Pos mode.}
 A channel owns whole blocks, so send and double send move a window as a contiguous run, with full chunks.
 The price is that a window is owned by few channels: with $n_c$ channels each one owns $p/n_c$ consecutive positions, and the window of $2^k$ positions of step $k$ intersects only $\lceil 2^k n_c/p\rceil$ of them, the others are idle for that step (\cref{fig:bfly-posuse}).
-For small blocks this does not matter, since the time is determined by the latency, and pos mode is selected only there, below the crossover $n_cS$ of \cref{eq:bfly-pos}; for large blocks a window would be moved by a few channels only, and the partition would limit the bandwidth.
+For small blocks this does not matter, since the time is determined by the latency, and pos mode is selected only there, below the crossover $n_cS$ of \cref{eq:bfly-pos}. For large blocks a window would be moved by a few channels only, and the partition would limit the bandwidth.
 Permute cannot use pos mode at all.
 
 The expectation is then that send and double send are much faster than block-by-block where pos mode applies, and that in slice mode they degrade to the calls of block-by-block while keeping their own extra cost: the exchange for send, the permutation for permute.
@@ -819,13 +819,13 @@ In these runs the switch lies between 16 and 256\,kB.
     \node[anchor=west] at (2*\c-0.15,1.5) {channel \c};
   }
 \end{tikzpicture}
-\caption{Use of the channels in pos mode, allgather with $p=8$ and four channels, for the rank of position $0$. Each channel owns two positions; the window sent at step $k$ (colored) has $2^k$ positions and involves only the channels that own part of it. In the reduce-scatter the steps are in the opposite order.}
+\caption{Use of the channels in pos mode, allgather with $p=8$ and four channels, for the rank of position $0$. Each channel owns two positions. The window sent at step $k$ (colored) has $2^k$ positions and involves only the channels that own part of it. In the reduce-scatter the steps are in the opposite order.}
 \label{fig:bfly-posuse}
 \end{figure}
 
 \begin{figure}[!tbp]
   \bflypair{AllGather_SIMPLE+LL_best_algo_heatmap_BINE_bv-BUTTERFLY.png}{ReduceScatter_SIMPLE+LL_best_algo_heatmap_BINE_bv-BUTTERFLY.png}{0.95}
-  \caption{Fastest \bine{} strategy and protocol for each block size and number of ranks (median latency), without the ring. Each cell lists the other combinations with the percentage by which they are slower. B, S, P, D: block-by-block, send, permute and double send; the suffixes S and LL are the protocols.}
+  \caption{Fastest \bine{} strategy and protocol for each block size and number of ranks (median latency), without the ring. Each cell lists the other combinations with the percentage by which they are slower. B, S, P, D: block-by-block, send, permute and double send. The suffixes S and LL are the protocols.}
   \label{fig:bfly-modes}
 \end{figure}
 
@@ -853,7 +853,7 @@ Block size & {send} & {double} & {permute} & {send} & {double} & {permute} \\
 \end{tabular}
 \end{table}
 
-At 1\,kB block-by-block pays one call per block, and is $3\times$ slower than send and double send in the allgather ($609$ against $191$ and $194$\,\textmu s) and even more in the reduce-scatter ($2227$ against $218$ and $184$\,\textmu s; the block-by-block point is irregular, since on $32$ ranks it takes $213$\,\textmu s).
+At 1\,kB block-by-block pays one call per block, and is $3\times$ slower than send and double send in the allgather ($609$ against $191$ and $194$\,\textmu s) and even more in the reduce-scatter ($2227$ against $218$ and $184$\,\textmu s. The block-by-block point is irregular, since on $32$ ranks it takes $213$\,\textmu s).
 This is the benefit of pos mode, and it disappears between 16 and 256\,kB, where the switch to slice mode takes place ($n_cS$, \cref{eq:bfly-pos}).
 From 256\,kB on send is at most $9\,\%$ slower than block-by-block, i.e., it has the same transfers plus its exchange, whose cost shrinks as $p$ grows (at 64\,MB, $1.2$--$1.3\times$ on $4$ and $8$ ranks and $1.03$--$1.06\times$ on $64$) because it moves one block against the $p-1$ of the butterfly.
 Permute adds the in-place permutation of the whole buffer, so on $64$ ranks it is $4.6$--$5\times$ slower than block-by-block in the allgather and $2\times$ in the reduce-scatter from 1\,MB on, and it is the best strategy only at 1\,kB on $16$ ranks or fewer, by at most $12\,\%$.
@@ -924,7 +924,7 @@ On the uplinks that connect the nodes to the network this doubles the load: on $
     \end{tabular}
     \caption{Distance halving (double send): $8+4+0=12$ blocks per uplink.}
   \end{subfigure}
-  \caption{The reduce-scatter on $8$ ranks in two nodes of four, each node attached to the network switch by one uplink. Each step shows its four exchanges along the links they use: green paths stay inside a node (NVLink), red paths cross the network; line width grows with the blocks sent. The label on each uplink is the number of blocks it carries per direction in that step. The two schedules make the same exchanges in opposite orders, and distance halving pairs the farthest partners with the largest windows. The allgather is the same figure read from right to left.}
+  \caption{The reduce-scatter on $8$ ranks in two nodes of four, each node attached to the network switch by one uplink. Each step shows its four exchanges along the links they use: green paths stay inside a node (NVLink), red paths cross the network, and line width grows with the blocks sent. The label on each uplink is the number of blocks it carries per direction in that step. The two schedules make the same exchanges in opposite orders, and distance halving pairs the farthest partners with the largest windows. The allgather is the same figure read from right to left.}
   \label{fig:bfly-dh-tree}
 \end{figure}
 

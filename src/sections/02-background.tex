@@ -24,7 +24,7 @@ Several collectives are related: the allreduce can be obtained as a reduce-scatt
 \paragraph{Cost model.}
 To compare algorithms we use the usual latency--bandwidth model~\cite{hockney1994communication,thakur2005optimization}.
 Sending a message of $m$ bytes between two ranks takes $\alpha+m\beta$, where $\alpha$ is the latency (including transmission setup overhead) and $\beta$ the time to transfer one byte, i.e., $\mathrm{bandwidth} = 1/\beta$.
-Let $\gamma$ be the cost of aggregating (reducing) two bytes, i.e., the time to apply the reduction operator to one byte from each of two operands; reducing two vectors of $m$ bytes locally therefore takes $m\gamma$.
+Let $\gamma$ be the cost of aggregating (reducing) two bytes, i.e., the time to apply the reduction operator to one byte from each of two operands. Reducing two vectors of $m$ bytes locally therefore takes $m\gamma$.
 Algorithms proceed in \emph{steps}, and at each step a rank sends at most one message and receives at most one.
 The model ignores the topology of the network: all the pairs of ranks are assumed to be at the same distance.
 This is precisely the assumption that the Bine tree relaxes (Sec.~\ref{sec:bg-bine}).
@@ -44,7 +44,7 @@ $r$ & Rank identifier, $r\in[0,p-1]$. \\
 $t$ & Rank identifier of the root of the collective. \\
 $n$ & Size of the vector of the collective, in bytes. \\
 $k$ & Number of chunks in which the vector is split for pipelining. \\
-$d$ & Depth of a tree (edges from the root to the deepest leaf); $d=s$ for the trees of this chapter. \\
+$d$ & Depth of a tree (edges from the root to the deepest leaf), with $d=s$ for the trees of this chapter. \\
 $s$ & Number of steps of a tree algorithm, $s=\log_2 p$ ($p$ a power of two). \\
 $\alpha,\beta,\gamma$ & Latency, time per byte transferred, time per byte reduced. \\
 $\oplus$ & Bitwise exclusive or (XOR). \\
@@ -132,7 +132,7 @@ For a large $k$ the bandwidth term tends to $n\beta$, independently of $p$, but 
     \label{fig:bg-ring-pipe}
   \end{subfigure}
   \caption{Link usage on a ring of $p=3$ ranks. Arrows are links coloured by the
-           chunk they carry; grey links are idle.}
+           chunk they carry, and grey links are idle.}
   \label{fig:bg-ring-links}
 \end{figure}
 
@@ -172,7 +172,7 @@ Its weakness is the number of steps: the performance is suboptimal for large num
     \draw[cross] (r7.south) -- ++(0,-1.1) -| (r0.south);
   \end{tikzpicture}
   \caption{Ring with ranks mapped consecutively on a network organized in two groups.
-           Grey links stay inside a group; only the links between the endpoints of
+           Grey links stay inside a group. Only the links between the endpoints of
            the groups (red) cross a group boundary.}
   \label{fig:bg-ring-locality}
 \end{figure}
@@ -185,7 +185,7 @@ Here, \emph{tree} always means the standard binomial tree, not the double binary
 \paragraph{Construction.}
 A binomial tree of order $0$ is a single node.
 A binomial tree of order $k$ is obtained by linking two binomial trees of order $k-1$, making the root of one of them a child of the root of the other (Fig.~\ref{fig:bg-binomial}).
-A tree of order $s$ has $2^s$ nodes, depth $s$ and $2^s-1$ edges; the root has $s$ children, and the number of nodes at depth $d$ is the binomial coefficient $\binom{s}{d}$, which gives the tree its name.
+A tree of order $s$ has $2^s$ nodes, depth $s$ and $2^s-1$ edges. The root has $s$ children, and the number of nodes at depth $d$ is the binomial coefficient $\binom{s}{d}$, which gives the tree its name.
 In a collective, each node of the tree is a rank and each edge is a communication between two ranks.
 The assignment of ranks to nodes is arbitrary, and any assignment gives a correct algorithm.
 For the collectives that include a computation (e.g., the reduce) this requires that the operator is associative and, since the assignment of ranks to nodes is arbitrary, commutative.
@@ -201,7 +201,7 @@ Let $r'=(r-t)\bmod p$ be the rank relative to the root $t$.
   \item In the \emph{distance-halving} tree, used for example by MPICH~\cite{desensi2025bine}, at step $i$ rank $r'$ sends to $r'\oplus2^{s-i-1}$, so the logical distance halves at every step: $p/2,\dots,2,1$. A rank $r'\neq0$ receives at the step $s-1-\nu$, where $\nu$ is the position of its least significant set bit.
 \end{itemize}
 Figure~\ref{fig:bg-binomial} shows the distance-halving tree for $p=8$ and $t=0$.
-Rank $0$ sends to $4$, $2$, $1$ at steps $0$, $1$, $2$; rank $4$ sends to $6$ and $5$ at steps $1$ and $2$; rank $2$ sends to $3$ at step $2$; and rank $6$ sends to $7$ at step $2$.
+Rank $0$ sends to $4$, $2$, $1$ at steps $0$, $1$, $2$, rank $4$ sends to $6$ and $5$ at steps $1$ and $2$, rank $2$ sends to $3$ at step $2$, and rank $6$ sends to $7$ at step $2$.
 We focus on the distance-halving tree, which typically performs better when combined with \bine{} and is the only variant implemented in this thesis.
 
 \begin{figure}[t]
@@ -232,7 +232,7 @@ We focus on the distance-halving tree, which typically performs better when comb
 
 \paragraph{Other collectives.}
 The reduce uses the same tree with the edges reversed: the leaves send first, and each rank combines the vectors received from its children with its own before sending to its parent.
-In the scatter the root sends to its child the part of the vector (the blocks) destined to the subtree of that child, and the same is repeated at each level; the gather is the opposite operation.
+In the scatter the root sends to its child the part of the vector (the blocks) destined to the subtree of that child, and the same is repeated at each level. The gather is the opposite operation.
 In both, the amount of data per message halves (or doubles) at each step, so that the total volume handled by the root is $\tfrac{p-1}{p}n$.
 For a large vector, the broadcast can also be implemented as a scatter followed by an allgather~\cite{thakur2005optimization}.
 
@@ -275,7 +275,7 @@ Binomial trees can be adapted to any $p$ by running the algorithm on the $p'=2^{
 The cost model of Table~\ref{tab:bg-cost} assumes that all pairs of ranks are equally distant, but on a real machine this is not true.
 The two trees above have the same number of steps and the same total volume of data, but they can generate a very different traffic on the slow links~\cite{desensi2025bine}.
 Consider a broadcast of $n$ bytes over eight nodes connected through a $2{:}1$ oversubscribed fat tree, where each leaf switch serves two consecutive ranks, i.e., $\{0,1\},\{2,3\},\{4,5\},\{6,7\}$, and the uplinks are the bottleneck (Fig.~\ref{fig:bg-locality}).
-In the distance-doubling tree (Fig.~\ref{fig:bg-locality-doubling}), the transfers at the second and third steps ($0\to2$ and $1\to3$; then $0\to4$, $1\to5$, $2\to6$, $3\to7$) all cross the uplinks, for a total of $2n+4n=6n$ bytes, and the two transfers of the second step even share the uplink of the first switch.
+In the distance-doubling tree (Fig.~\ref{fig:bg-locality-doubling}), the transfers at the second and third steps ($0\to2$ and $1\to3$, then $0\to4$, $1\to5$, $2\to6$, $3\to7$) all cross the uplinks, for a total of $2n+4n=6n$ bytes, and the two transfers of the second step even share the uplink of the first switch.
 In the distance-halving tree (Fig.~\ref{fig:bg-locality-halving}), only $0\to4$ ($n$ bytes) and $0\to2$, $4\to6$ ($2n$ bytes) cross the uplinks, for $3n$ bytes in total, and the last step, which is the one with the most transfers, is entirely local.
 The intuition is that closer communication should be preferred when more ranks are sending.
 This example also assumes that rank identifiers are close to the physical position of the ranks, which holds when the ranks are mapped consecutively on the machine (e.g., under the default block distribution of Slurm).
@@ -292,7 +292,7 @@ This example also assumes that rank identifiers are close to the physical positi
       \ftstep{0,1,2,3}{0/4, 1/5, 2/6, 3/7}{0/2n, 1/2n, 2/2n, 3/2n} \\
       step 1 & step 2 & step 3
     \end{tabular}
-    \caption{Distance-doubling: steps 2 and 3 cross the uplinks, for $2n+4n=6n$ bytes; at step 2 the two transfers share the uplink of the first switch.}
+    \caption{Distance-doubling: steps 2 and 3 cross the uplinks, for $2n+4n=6n$ bytes. At step 2 the two transfers share the uplink of the first switch.}
     \label{fig:bg-locality-doubling}
   \end{subfigure}
 
@@ -309,7 +309,7 @@ This example also assumes that rank identifiers are close to the physical positi
     \caption{Distance-halving: only steps 1 and 2 cross the uplinks, for $n+2n=3n$ bytes, and the last step, the one with the most transfers, is entirely local.}
     \label{fig:bg-locality-halving}
   \end{subfigure}
-  \caption{Broadcast from rank 0 over eight ranks on a 2:1 oversubscribed fat tree (leaf switches at the middle level, spine at the top), where each leaf switch serves two consecutive ranks. Each step shows the links used by its transfers: red paths cross the (bottleneck) uplinks, green paths stay under a single leaf switch. Gray ranks already hold the data; the label on an uplink is the volume it carries in that step.}
+  \caption{Broadcast from rank 0 over eight ranks on a 2:1 oversubscribed fat tree (leaf switches at the middle level, spine at the top), where each leaf switch serves two consecutive ranks. Each step shows the links used by its transfers: red paths cross the (bottleneck) uplinks, green paths stay under a single leaf switch. Gray ranks already hold the data. The label on an uplink is the volume it carries in that step.}
   \label{fig:bg-locality}
 \end{figure}
 
@@ -327,7 +327,7 @@ Minimizing it over $k$ gives $k^\ast=\sqrt{(p-2)\,n\beta/\alpha}$ and
   =(p-2)\,\alpha+n\beta+2\sqrt{(p-2)\,\alpha\,n\beta},
   \label{eq:bg-ring-opt}
 \end{equation}
-valid when $k^\ast\ge1$; otherwise the best choice is $k=1$ and the ring takes $(p-1)(\alpha+n\beta)$~\cite{casanova2008parallel}.  The same square-root form is obtained for the pipelined broadcast of other topologies, e.g., $\bigl(\sqrt{(\lceil\log_2p\rceil-1)\alpha}+\sqrt{n\beta}\bigr)^2$ for the optimal algorithm of~\cite{traff2005optimal}.
+valid when $k^\ast\ge1$. Otherwise the best choice is $k=1$ and the ring takes $(p-1)(\alpha+n\beta)$~\cite{casanova2008parallel}.  The same square-root form is obtained for the pipelined broadcast of other topologies, e.g., $\bigl(\sqrt{(\lceil\log_2p\rceil-1)\alpha}+\sqrt{n\beta}\bigr)^2$ for the optimal algorithm of~\cite{traff2005optimal}.
 This is to be compared with $T_{\text{tree}}=s(\alpha+n\beta)$ of Eq.~\eqref{eq:bg-tree-cost}.
 For the reduce, the same holds with $\beta$ replaced by $\beta+\gamma$.
 Two regimes follow.
@@ -425,7 +425,7 @@ Figure~\ref{fig:bg-double-tree} shows an example with $p=8$.
     \end{tikzpicture}
     \caption{Second tree (mirror of the first).}
   \end{subfigure}
-  \caption{Example of double binary tree over $p=8$ ranks. Arrows are the edges of a broadcast; shaded ranks are internal nodes (the root included), white ranks are leaves. The ranks $\{0,2,4,6\}$ are internal in the first tree and leaves in the second, and the opposite holds for $\{1,3,5,7\}$. The first tree connects ranks at logical distance $4$, $2$ and $1$, with $1$, $2$ and $4$ edges respectively. The numbering is illustrative: the trees of \nccl{} are built across nodes (Sec.~\ref{sec:nccl-tree}).}
+  \caption{Example of double binary tree over $p=8$ ranks. Arrows are the edges of a broadcast. Shaded ranks are internal nodes (the root included), white ranks are leaves. The ranks $\{0,2,4,6\}$ are internal in the first tree and leaves in the second, and the opposite holds for $\{1,3,5,7\}$. The first tree connects ranks at logical distance $4$, $2$ and $1$, with $1$, $2$ and $4$ edges respectively. The numbering is illustrative: the trees of \nccl{} are built across nodes (Sec.~\ref{sec:nccl-tree}).}
   \label{fig:bg-double-tree}
 \end{figure}
 Every rank is internal in one tree and a leaf in the other, so in a broadcast, in each round, it receives one chunk of $n/2k$ bytes from the parent in each tree, and sends the chunk it received in the tree in which it is internal to its two children.
@@ -458,11 +458,11 @@ The allreduce is a reduce followed by a broadcast, and if the two phases are not
 which is minimized by $k^\ast=\sqrt{d\,n(2\beta+\gamma)/(4\alpha)}$, giving $4d\alpha+n(2\beta+\gamma)+4\sqrt{\alpha\,d\,n(2\beta+\gamma)}$.
 For $k\gg d$ the bandwidth and reduction terms, $2n\beta$ and $n\gamma$, are those of the ring and of the butterfly (Eq.~\eqref{eq:bg-butterfly-allreduce}), i.e., optimal, whereas the latency term is logarithmic in $p$ but with the pipeline depth $k$ added to it.
 Table~\ref{tab:bg-allreduce-cost} summarizes the allreduce algorithms of this chapter.
-The phases of the reduce and of the broadcast use different directions of the links, so they can be executed concurrently on different chunks; this is what \nccl{} does (Sec.~\ref{sec:nccl-tree}) and the sum above is therefore an upper bound.
+The phases of the reduce and of the broadcast use different directions of the links, so they can be executed concurrently on different chunks. This is what \nccl{} does (Sec.~\ref{sec:nccl-tree}), and the sum above is therefore an upper bound.
 \begin{table}[t]
 \centering
 \small
-\caption{Allreduce in the model of Sec.~\ref{sec:bg-collectives} ($p=2^s$). The binomial tree is a reduce followed by a broadcast without pipelining; the double binary tree is pipelined with $k$ chunks and has depth $d$ (Eq.~\eqref{eq:bg-double-allreduce}, phases not overlapped). The butterfly is a reduce-scatter followed by an allgather.}
+\caption{Allreduce in the model of Sec.~\ref{sec:bg-collectives} ($p=2^s$). The binomial tree is a reduce followed by a broadcast without pipelining. The double binary tree is pipelined with $k$ chunks and has depth $d$ (Eq.~\eqref{eq:bg-double-allreduce}, phases not overlapped). The butterfly is a reduce-scatter followed by an allgather.}
 \label{tab:bg-allreduce-cost}
 \begin{tabular}{@{}lccc@{}}
 \toprule
@@ -579,13 +579,13 @@ Allreduce & $2(p-1)\alpha+2\tfrac{p-1}{p}n\beta+\tfrac{p-1}{p}n\gamma$ & $2s\,\a
 
 \paragraph{Number of ranks not a power of two.}
 As for the binomial tree, the butterfly is adapted to any $p$ by running the algorithm on the $p'=2^{\lfloor\log_2p\rfloor}$ ranks.
-Before the butterfly, each of the $p-p'$ remaining ranks sends its data to one rank of the first group, which combines it with its own (reduce-scatter and allreduce) or keeps it (allgather); after the butterfly, the result is sent back~\cite{thakur2005optimization}.
+Before the butterfly, each of the $p-p'$ remaining ranks sends its data to one rank of the first group, which combines it with its own (reduce-scatter and allreduce) or keeps it (allgather). After the butterfly, the result is sent back~\cite{thakur2005optimization}.
 This adds up to two steps in which $n$ bytes are transferred, and part of the ranks are idle during the butterfly.
 
 \paragraph{Communication locality.}
 As for the tree, the cost model ignores the topology, but the order of the steps changes how much data crosses the slow links.
 Consider the reduce-scatter on the $2{:}1$ oversubscribed fat tree of Fig.~\ref{fig:bg-locality}, where each leaf switch serves two consecutive ranks.
-With distance-halving, the partners at step $0$ are at distance $4$, and all the $8$ ranks send $n/2$ bytes across the uplinks; at step $1$ the partners are at distance $2$ and the ranks send $n/4$ bytes across the uplinks again; only the last step, with $n/8$ bytes, is local.
+With distance-halving, the partners at step $0$ are at distance $4$, and all the $8$ ranks send $n/2$ bytes across the uplinks. At step $1$ the partners are at distance $2$ and the ranks send $n/4$ bytes across the uplinks again. Only the last step, with $n/8$ bytes, is local.
 In total $8\,(n/2+n/4)=6n$ bytes cross the uplinks.
 With distance-doubling the order is reversed: the largest message, $n/2$, is exchanged between ranks under the same switch, and only $8\,(n/4+n/8)=3n$ bytes cross the uplinks.
 The allgather is symmetric, and for it distance-halving is the better choice.
@@ -667,11 +667,11 @@ Figure~\ref{fig:bg-bine-circle} compares the distance-halving binomial tree and 
 The schedule is computed with the \emph{negabinary} (base $-2$) representation of the ranks, in which a number is written as a sum of powers of $-2$ instead of $2$.
 For example, $2=110_{-2}$, since $1\cdot(-2)^2+1\cdot(-2)^1+0\cdot(-2)^0=4-2=2$.
 Unlike the binary representation, the negabinary one represents positive and negative integers without a sign (e.g., $011_{-2}=-1$), so on a fixed number of bits not every string is a non-negative rank.
-With $s$ bits, the largest non-negative number $m$ that can be represented is obtained by setting to one all the even positions and to zero all the odd ones, since only even powers of $-2$ are positive; for $s=6$, $m=010101_{-2}=16+4+1=21$.
+With $s$ bits, the largest non-negative number $m$ that can be represented is obtained by setting to one all the even positions and to zero all the odd ones, since only even powers of $-2$ are positive. For $s=6$, $m=010101_{-2}=16+4+1=21$.
 The construction of the Bine tree places the rightmost rank at $m$.
 Consequently, the ranks $r\in[0,m]$ are represented by their own negabinary value, while a rank $r>m$ (on the left of the root) is represented by the negabinary value of $r-p$.
 For $p=8$ ($s=3$), $m=101_{-2}=5$, and rank $6$ is represented by $6-8=-2=010_{-2}$.
-We write $\rtn(r)$ for the representation of $r$ ($\rtn(r,p)$ if $p$ needs to be explicit) and $\ntr(x)$ for the inverse function; both can be computed efficiently with bit masking and one addition or subtraction~\cite{desensi2025bine}.
+We write $\rtn(r)$ for the representation of $r$ ($\rtn(r,p)$ if $p$ needs to be explicit) and $\ntr(x)$ for the inverse function. Both can be computed efficiently with bit masking and one addition or subtraction~\cite{desensi2025bine}.
 Table~\ref{tab:bg-bine-p8} lists the representations for $p=8$.
 
 \begin{table}[t]
@@ -734,7 +734,7 @@ Since for a binomial tree the maximum distance between two ranks is $p/2$, the d
   \approx\frac{2^{s-i}/3}{2^{s-i-1}}=\frac{2}{3}.
   \label{eq:bg-distance-ratio}
 \end{equation}
-Asymptotically, communicating ranks are therefore at a modular distance about one third shorter; for the small step sizes of Table~\ref{tab:bg-distance} the reduction ranges between $25\%$ and $50\%$.
+Asymptotically, communicating ranks are therefore at a modular distance about one third shorter. For the small step sizes of Table~\ref{tab:bg-distance} the reduction ranges between $25\%$ and $50\%$.
 
 \begin{table}[t]
 \centering
@@ -845,7 +845,7 @@ The order is chosen as for the standard butterfly (Sec.~\ref{sec:bg-butterfly}):
 \paragraph{Distance reduction.}
 In both orders, the distance between partners at a step is the one of the \bine{} tree, $\delta_{\text{bine}}=\lvert\tau_i\rvert\approx 2^{s-i}/3$, that is about $2/3$ of the one of the standard butterfly at every step (Eq.~\eqref{eq:bg-distance-ratio}, Table~\ref{tab:bg-distance}).
 The upper bound on the reduction of the traffic on the global links is therefore the same, $33\%$ with respect to the standard butterfly of the same order~\cite{desensi2025bine}.
-In the analysis of the job allocations of two supercomputers of~\cite{desensi2025bine}, the reduction grows with the number of nodes, since larger jobs span more groups; in a few cases (all on fewer than $64$ nodes) \bine{} increases the global traffic, because it minimizes the modular distance and not the actual one.
+In the analysis of the job allocations of two supercomputers of~\cite{desensi2025bine}, the reduction grows with the number of nodes, since larger jobs span more groups. In a few cases (all on fewer than $64$ nodes) \bine{} increases the global traffic, because it minimizes the modular distance and not the actual one.
 
 \paragraph{Collectives.}
 The reduce-scatter uses a vector-halving, distance-doubling \bine{} butterfly: at each step a rank exchanges half of its data with its partner, so the largest messages go to the closest partners, and each rank sends $n\,\tfrac{p-1}{p}$ bytes in $s$ steps as in the standard algorithm.
@@ -854,7 +854,7 @@ The allreduce uses either a \bine{} recursive doubling, in which the whole vecto
 
 \paragraph{Non-contiguous data.}
 The price of the shorter distances is that, in the distance-doubling order, the blocks to be sent at a step belong to a subtree whose ranks are not contiguous, whereas in the distance-halving order they are contiguous if the buffer is considered circular~\cite{desensi2025bine}.
-Four strategies are possible for the reduce-scatter, and symmetrically for the allgather: send each block \emph{block-by-block}; \emph{permute} the buffer beforehand so that the blocks to send are contiguous, which requires $p$ to be a power of two; \emph{send} contiguous data as if the buffer had been permuted and fix the ownership of the blocks at the end, which is free when an allgather follows, as in the allreduce; or use the distance-halving order, at the cost of more global traffic and of at most two segments per step (\emph{double send}).
+Four strategies are possible for the reduce-scatter, and symmetrically for the allgather: \emph{block-by-block} sends each block as it is, \emph{permute} rearranges the buffer beforehand so that the blocks to send are contiguous, which requires $p$ to be a power of two, \emph{send} sends contiguous data as if the buffer had been permuted and fixes the ownership of the blocks at the end, which is free when an allgather follows, as in the allreduce, and \emph{double send} uses the distance-halving order instead, at the cost of more global traffic and of at most two segments per step.
 
 \paragraph{Number of ranks not a power of two.}
 As for the \bine{} tree, for $p$ even the construction can be used as is, removing the duplicated subtrees from each of the trees that compose the butterfly, whereas for $p$ odd the standard techniques of Sec.~\ref{sec:bg-butterfly} must be used, at the cost of an increase in the communication volume~\cite{desensi2025bine}.

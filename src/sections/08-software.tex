@@ -10,7 +10,7 @@ Each stage has its own pair of tools (\cref{fig:sw-overview}):
   \item \textbf{CollBench} and \textbf{Collalgo} cover the MPI stage. Collalgo implements the \bine{} collectives over MPI point-to-point calls, and CollBench records the timing of each of those calls, so that a schedule can be checked and inspected message by message.
   \item \textbf{fastest} and \textbf{unitccl} cover the \nccl{} stage. fastest is a small test framework for C code driven from Python, and unitccl uses it to unit-test the schedule generators of the \nccl{} fork and to run the scaling experiments, either with its own benchmark or with NVIDIA's \texttt{nccl-tests}.
 \end{itemize}
-All four are available on GitHub under the author's account (\texttt{DanieleSavino}); the \nccl{} fork that contains the algorithms is a separate repository and is the subject of \cref{ch:tree,ch:butterfly,ch:pat,ch:treeallreduce}.
+All four are available on GitHub under the author's account (\texttt{DanieleSavino}). The \nccl{} fork that contains the algorithms is a separate repository and is the subject of \cref{ch:tree,ch:butterfly,ch:pat,ch:treeallreduce}.
 
 \begin{figure}[htbp]
   \centering
@@ -43,7 +43,7 @@ All four are available on GitHub under the author's account (\texttt{DanieleSavi
             label={[font=\small]above:\nccl{} testing and benchmarking}] {};
     \end{scope}
   \end{tikzpicture}
-  \caption{The four repositories. Solid arrows: build-time dependencies (git submodules and static linking); dashed arrows: tools that are driven or whose output is consumed.}
+  \caption{The four repositories. Solid arrows: build-time dependencies (git submodules and static linking). Dashed arrows: tools that are driven or whose output is consumed.}
   \label{fig:sw-overview}
 \end{figure}
 
@@ -56,7 +56,7 @@ CollBench answers these questions by recording every send and receive issued by 
 
 \paragraph{Operation records.}
 Each operation is described by a \texttt{CB\_OperationData\_t}: the rank that posts it, the peer, the type of operation (send, receive or one of the collectives), the step index of the algorithm (\texttt{algo\_idx}), and three timestamps taken with \texttt{CLOCK\_MONOTONIC}: when the operation is posted, when the rank starts waiting on it, and when it completes.
-For a blocking operation the last two coincide; for a non-blocking one their difference separates the time spent issuing the operation from the time spent waiting for it, which shows how much computation or other communication overlaps with it.
+For a blocking operation the last two coincide. For a non-blocking one their difference separates the time spent issuing the operation from the time spent waiting for it, which shows how much computation or other communication overlaps with it.
 The records of a rank are appended to a growable list (\texttt{CB\_DistList\_t}).
 
 \paragraph{Instrumentation macros.}
@@ -69,16 +69,16 @@ for (...) {                                     /* one iteration per step */
 }
 CB_COLL_END(comm, rank, root, "out/tree/bine_bcast.json");
 \end{lstlisting}
-\texttt{CB\_LSEND} and \texttt{CB\_LRECV} post the operation, wait for it and record it; the non-blocking variants \texttt{CB\_ILSEND} and \texttt{CB\_ILRECV} record the posting time and leave the request to \texttt{CB\_LWAIT} or \texttt{CB\_LWAITALL}.
+\texttt{CB\_LSEND} and \texttt{CB\_LRECV} post the operation, wait for it and record it. The non-blocking variants \texttt{CB\_ILSEND} and \texttt{CB\_ILRECV} record the posting time and leave the request to \texttt{CB\_LWAIT} or \texttt{CB\_LWAITALL}.
 \texttt{CB\_COLL\_END} gathers the lists of all the ranks onto the root with an \texttt{MPI\_Gatherv} (the records travel as an MPI derived datatype registered by \texttt{CB\_init}) and the root writes them as JSON.
-All the macros are compiled only when \texttt{CB\_PROFILE} is defined; otherwise they expand to the bare MPI calls, so the same source builds both the profiled and the production version of a collective with no overhead in the latter.
+All the macros are compiled only when \texttt{CB\_PROFILE} is defined. Otherwise they expand to the bare MPI calls, so the same source builds both the profiled and the production version of a collective with no overhead in the latter.
 Errors are propagated as \texttt{CB\_Error\_t} codes through \texttt{goto}-based cleanup labels, which the scope macros define.
 
 \paragraph{Visualization.}
 Two Python scripts turn a trace into a picture.
 \texttt{tree.py} detects whether the collective flows away from the root (broadcast, scatter) or towards it (reduce, gather), rebuilds the tree from the send records and draws it by step, annotating each edge with the duration of the transfer (\cref{fig:sw-cb-tree}).
 \texttt{butterfly.py} does the same for collectives without a root, in which every rank exchanges with a partner at every step.
-Its \emph{candle} view (\cref{fig:sw-cb-candle}) draws each rank as a horizontal lane and each exchange as a vertical connector between the two lanes, one column per pair, grouped by step, so that the pairing of a step and the distance between partners are read at a glance; the other views draw the same exchanges as a rank-by-step grid, as a ladder, or as the $p$ broadcast trees that a butterfly allgather implicitly contains, one per source block.
+Its \emph{candle} view (\cref{fig:sw-cb-candle}) draws each rank as a horizontal lane and each exchange as a vertical connector between the two lanes, one column per pair, grouped by step, so that the pairing of a step and the distance between partners are read at a glance. The other views draw the same exchanges as a rank-by-step grid, as a ladder, or as the $p$ broadcast trees that a butterfly allgather implicitly contains, one per source block.
 These drawings are how the schedules of \cref{ch:tree,ch:butterfly} were checked visually against the figures of the algorithms before they were moved to \nccl{}.
 
 \begin{figure}[!tbp]
@@ -127,7 +127,7 @@ CA_UFREE(tmpbuff, use_cuda);
 \end{lstlisting}
 \end{minipage}\par\smallskip
 The communication itself needs no branch: device pointers are handed to MPI as they are, and a CUDA-aware MPI moves them directly between GPUs.
-The only computation, the local reduction, dispatches to \texttt{MPI\_Reduce\_local} on the host or to a CUDA kernel on the device; the kernel is templated on the element type and on the operation (sum, product, minimum, maximum and the bitwise ones) and selected at run time from the \texttt{MPI\_Datatype} and \texttt{MPI\_Op} arguments, so the collective keeps the MPI signature.
+The only computation, the local reduction, dispatches to \texttt{MPI\_Reduce\_local} on the host or to a CUDA kernel on the device. The kernel is templated on the element type and on the operation (sum, product, minimum, maximum and the bitwise ones) and selected at run time from the \texttt{MPI\_Datatype} and \texttt{MPI\_Op} arguments, so the collective keeps the MPI signature.
 CUDA is a build option (\texttt{-DCA\_CUDA=ON}): without it, \texttt{CA\_is\_devptr} returns $0$, the unified macros collapse to \texttt{malloc}, \texttt{memcpy} and \texttt{free}, no CUDA header is included, and the library builds on machines without the toolkit.
 CUDA errors are checked by macros that print the failing call with its file and line and jump to the cleanup label of the collective, in the same style as the MPI and CollBench checks, so a failure on the device unwinds the same way as one on the host.
 With this, the \bine{} schedules were first run on GPUs, with the trace of every message, before any \nccl{} code was written.
@@ -158,11 +158,11 @@ Test names are paths, so tests can be selected by prefix.
 \paragraph{Outputs.}
 The output of a test records its name, its flags, an exit status, allocation and deallocation counters, the wall-clock time measured by the scheduler around the test, and, for tests that run an inner loop of their own, the mean, the standard deviation and the number of the inner samples.
 Flags and exit statuses are bitmaps.
-The flags select the time unit to report, whether failures are errors, warnings or log entries, and whether memory is tracked; the exit statuses distinguish success and skip from failed assertions, unexpected states, resource, MPI and CUDA errors, so that a single integer tells why a test failed.
+The flags select the time unit to report, whether failures are errors, warnings or log entries, and whether memory is tracked. The exit statuses distinguish success and skip from failed assertions, unexpected states, resource, MPI and CUDA errors, so that a single integer tells why a test failed.
 
 \paragraph{Python bindings.}
 The bindings (\texttt{bindings/pybind.cpp}) are built per project with pybind11: the user's static library is linked with \texttt{--whole-archive}, so that every constructor is kept by the linker, and the module name is chosen at build time (\texttt{unitccl} for unitccl).
-At import, the module exposes every registered test name as a constant in a \texttt{tests} submodule, plus \texttt{get\_tests}, \texttt{get\_subtests(prefix)}, \texttt{get\_test(name)} and \texttt{run\_test(name)}; C error codes are translated into the matching Python exceptions.
+At import, the module exposes every registered test name as a constant in a \texttt{tests} submodule, plus \texttt{get\_tests}, \texttt{get\_subtests(prefix)}, \texttt{get\_test(name)} and \texttt{run\_test(name)}. C error codes are translated into the matching Python exceptions.
 A typed stub file is generated next to the module for editor completion.
 
 \paragraph{Runner.}
@@ -211,7 +211,7 @@ It contains the fork and fastest as git submodules, a C/CUDA part linked against
     \draw[arr] (nt) -- (csv.north -| nt);
     \draw[arr] (csv) -- (plt);
   \end{tikzpicture}
-  \caption{Structure of unitccl. The standalone tests and the scaling tests are fastest tests compiled into the \texttt{unitccl} Python module; the scaling tests and \texttt{nccl-tests} write the same CSV schema, so the plots do not depend on which benchmark produced the data.}
+  \caption{Structure of unitccl. The standalone tests and the scaling tests are fastest tests compiled into the \texttt{unitccl} Python module. The scaling tests and \texttt{nccl-tests} write the same CSV schema, so the plots do not depend on which benchmark produced the data.}
   \label{fig:sw-unitccl}
 \end{figure}
 
@@ -239,7 +239,7 @@ Running the benchmark as a separate process keeps every test in a fresh \nccl{} 
 
 \paragraph{Scaling with \texttt{nccl-tests}.}
 The \texttt{nccltests} subcommand runs the same sweep with NVIDIA's \texttt{nccl-tests} instead, as an independent check of \texttt{unitccl\_bench}.
-\texttt{nccl-tests} times its iterations back to back with no barrier in between and reports their mean, so it measures a pipelined throughput rather than the latency of an isolated collective; repeating each size $R$ times (\texttt{-N}) gives $R$ samples per point.
+\texttt{nccl-tests} times its iterations back to back with no barrier in between and reports their mean, so it measures a pipelined throughput rather than the latency of an isolated collective. Repeating each size $R$ times (\texttt{-N}) gives $R$ samples per point.
 Its sizes are converted so that both tools refer to the same per-rank buffer, and its results are written to the same CSV files, all reported datata points come from the \texttt{nccl-tests} branch.
 
 \paragraph{Sweeps on Slurm.}

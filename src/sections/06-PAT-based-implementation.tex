@@ -4,7 +4,7 @@
 This chapter describes a second implementation of the \bine{} allgather in \nccl{}.
 It does not change the schedule of \cref{ch:butterfly}: the partners, the labels, the four strategies for the non-contiguous data and the invariants are the same.
 What changes is how the schedule is executed.
-The kernels of \cref{ch:butterfly} issue one primitive call per transfer, from two groups of threads; here the allgather uses the device-side machinery of \pat{} (\cref{sec:nccl-pat}), a schedule thread that feeds a set of workers, which pack many pieces in each slot of the FIFO.
+The kernels of \cref{ch:butterfly} issue one primitive call per transfer, from two groups of threads. Here the allgather uses the device-side machinery of \pat{} (\cref{sec:nccl-pat}), a schedule thread that feeds a set of workers, which pack many pieces in each slot of the FIFO.
 Only the allgather is implemented, for the \texttt{Simple} protocol, the only one for which \pat{} exists in \nccl{}.
 
 %==============================================================================
@@ -28,16 +28,16 @@ The price is one more local copy for every received piece (\cref{sec:pat-prims})
 \paragraph{Same tables.}
 The kernels read the tables of \cref{ch:butterfly} from \texttt{channel.bine}: $\Pi$ for send, permute and block-by-block, $\Pi^{\mathrm{dh}}$ for double send, and the labels $\nu$ and $\nu^{-1}$.
 Step $k\in[0,s-1]$ is the same as in \cref{alg:bfly-allgather}: the partner is $\Pi(r,s-1-k)$, and for double send $\Pi^{\mathrm{dh}}(r,s-1-k)=\Pi(r,k)$ (\cref{sec:bfly-dhlv}).
-The window has $2^k$ blocks and doubles at each step; the slots of the output buffer are those of \cref{tab:bfly-strategies}.
+The window has $2^k$ blocks and doubles at each step. The slots of the output buffer are those of \cref{tab:bfly-strategies}.
 
 \paragraph{Steps as dimensions.}
 The dimension $d$ of \pat{} is the distance $2^d$ between peers, the same for every rank.
 In the \bine{} butterfly the offset depends on the rank, but each step still identifies one peer per rank, and the \pat{} structures only need an index for it.
 We therefore use the step as the dimension: the connector of dimension $k$ of a rank points to its partner of step $k$.
-The peer to receive from and the peer to send to are the same rank, since the butterfly is symmetric; this is the only change in the constructor of the primitives (\cref{sec:pat-prims}).
+The peer to receive from and the peer to send to are the same rank, since the butterfly is symmetric. This is the only change in the constructor of the primitives (\cref{sec:pat-prims}).
 
 \paragraph{No one-rank-per-node restriction.}
-The native \pat{} is limited to one rank per node (\cref{sec:nccl-pat}); this restriction is not inherited.
+The native \pat{} is limited to one rank per node (\cref{sec:nccl-pat}). This restriction is not inherited.
 The peers are given by the tables of \cref{ch:butterfly}, which depend only on rank numbers, and the \bine{} setup selects for each pair the transport that can connect it (\cref{sec:nccl-transport}), so a partner can be on the same node, on another node, or both.
 
 \paragraph{Partition.}
@@ -116,13 +116,13 @@ The pre-step of \emph{send} uses one slot per chunk.
   \node[cell, fill=ch1!35, minimum width=0.5cm, minimum height=0.4cm] at (1.8,3.1) {};
   \node[anchor=west] at (2.1,3.1) {chunk 1};
 \end{tikzpicture}
-\caption{Packing of the pieces of a step into slots, with a window of $2^k=4$ blocks, $n_c=2$ chunks and $P=3$ pieces per slot: $N_k=\lceil 8/3\rceil=3$ slots, the last one not full. Pieces are ordered chunk by chunk; $j$ is the block of the window.}
+\caption{Packing of the pieces of a step into slots, with a window of $2^k=4$ blocks, $n_c=2$ chunks and $P=3$ pieces per slot: $N_k=\lceil 8/3\rceil=3$ slots, the last one not full. Pieces are ordered chunk by chunk. $j$ is the block of the window.}
 \label{fig:pat-slots}
 \end{figure}
 
 Two regimes follow from \cref{eq:pat-slots}.
 For small messages the slice is a single chunk, $\sigma=\texttt{channelCount}$ and $P=\lfloor E_s/\texttt{channelCount}\rfloor$ is large: as long as $2^k\le P$ the step is one slot, hence one transfer, and the algorithm is latency-optimal with $s$ transfers.
-For large messages $P=1$ and a step moves $n_c2^k$ slots; this is the linear part, which moves full slots and, per channel, about $(p-1)\,\texttt{channelCount}/E_s$ slots over all the steps.
+For large messages $P=1$ and a step moves $n_c2^k$ slots. This is the linear part, which moves full slots and, per channel, about $(p-1)\,\texttt{channelCount}/E_s$ slots over all the steps.
 
 %==============================================================================
 \section{Schedule generator}\label{sec:pat-gen}
@@ -133,8 +133,8 @@ The schedule thread asks a generator, a class with the method \texttt{getNextOp}
 There is one class per strategy (\texttt{BineAGAlgorithm} for send, \texttt{BineAGPermutationAlgorithm}, \texttt{BineAGBlockByBlockAlgorithm}, \texttt{BineAGDoubleSendAlgorithm}), sharing the structure of \cref{alg:pat-gen}.
 The generator is a state machine whose state is the stage (pre-step, butterfly, end), the step $k$, the slot $g_i$ and the position inside the slot, so that it produces one operation per call.
 
-The order of the operations is the order in which each connection is used, and it must be the one the proxy expects (\cref{sec:nccl-proxy}); the proxy is the one of \cref{ch:butterfly}, unchanged.
-In the pre-step, for every chunk, a send and then a receive; in a step, for every slot, the send of $P$ pieces (posted at the last one), then the receive of $P$ pieces (posted at the last one).
+The order of the operations is the order in which each connection is used, and it must be the one the proxy expects (\cref{sec:nccl-proxy}). The proxy is the one of \cref{ch:butterfly}, unchanged.
+In the pre-step, for every chunk, a send and then a receive. In a step, for every slot, the send of $P$ pieces (posted at the last one), then the receive of $P$ pieces (posted at the last one).
 Unlike the kernels of \cref{sec:bfly-kernels}, where sends and receives are executed by different thread groups and progress independently, one group of workers executes all the operations of a channel in order.
 Sends and receives must therefore alternate slot by slot, so that no rank blocks in a send that its partner cannot yet drain.
 
@@ -181,7 +181,7 @@ The four generators differ only in the choices of \cref{tab:bfly-strategies}: pr
 \toprule
 Strategy & Pre-step (per chunk) & Windows at step $k$ & $\textsc{Block}(w,j)$ & Post-step \\
 \midrule
-Send & exchange: send my block, receive into slot $x$; or local copy to slot $r$ if the peer is $r$ & $b$ or $b+g$ according to bit $k$ of $x$ & $w+j$ (position) & -- \\
+Send & exchange: send my block, receive into slot $x$, or local copy to slot $r$ if the peer is $r$ & $b$ or $b+g$ according to bit $k$ of $x$ & $w+j$ (position) & -- \\
 Permute & local copy to slot $x$ & as send & $w+j$ & in-place permutation, block $b\leftarrow$ slot $\mathrm{pos}(b)$ \\
 Block-by-block & local copy to slot $r$ & as send & $\nu^{-1}(\mathrm{rev}(w+j))$ & -- \\
 Double send & local copy to slot $r$ & circular window of $g$ blocks, adjacent received half & $(w+j)\bmod p$ & -- \\
@@ -190,11 +190,11 @@ Double send & local copy to slot $r$ & circular window of $g$ blocks, adjacent r
 \end{table}
 
 \begin{itemize}
-  \item \emph{Send.} The window is the aligned range of position $x$; the half sent is the one the rank holds (the lower one if bit $k$ of $x$ is $0$, the upper one otherwise) and the other is received. Blocks are read and written at the slot of their position.
-  The pre-step moves the block of each rank to its position: if the rank is its own destination (\texttt{redistTo}$=r$) it is a local copy; otherwise the rank sends its block to $\nu^{-1}(\mathrm{rev}(r))$ and receives into slot $x$ the block of rank $x$. The send is flagged \texttt{PatNoLocalCopy}, since it reads the input buffer and must not write slot $r$.
-  \item \emph{Permute.} Blocks are placed at their position with a local copy; the butterfly is the same as send, and the permutation to natural order runs after the schedule (\cref{sec:pat-permute}).
-  \item \emph{Block-by-block.} Blocks stay in natural order, so piece $j$ of a window is block $\nu^{-1}(\mathrm{rev}(w+j))$; the windows are the same as send. This is the strategy that benefits most from aggregation: the blocks are not adjacent, but the workers pack the pieces in the slot and they travel in one message.
-  \item \emph{Double send.} The generator keeps a circular window starting as $\{r\}$ (\texttt{winStart}$=r$). At step $k$ it sends the current window and receives the adjacent half of size $2^k$, below it if $r$ and $k$ have different parity and above it otherwise, the time reverse of the rule of \cref{sec:bfly-dhlv}; the received half is merged in the window. All indices are taken modulo $p$ with the mask $p-1$. The dimension of step $k$ is $s-1-k$ of $\Pi^{\mathrm{dh}}$, i.e., the partner $\Pi(r,k)$, and no pre-step or post-step is needed.
+  \item \emph{Send.} The window is the aligned range of position $x$. The half sent is the one the rank holds (the lower one if bit $k$ of $x$ is $0$, the upper one otherwise) and the other is received. Blocks are read and written at the slot of their position.
+  The pre-step moves the block of each rank to its position: if the rank is its own destination (\texttt{redistTo}$=r$) it is a local copy. Otherwise the rank sends its block to $\nu^{-1}(\mathrm{rev}(r))$ and receives into slot $x$ the block of rank $x$. The send is flagged \texttt{PatNoLocalCopy}, since it reads the input buffer and must not write slot $r$.
+  \item \emph{Permute.} Blocks are placed at their position with a local copy. The butterfly is the same as send, and the permutation to natural order runs after the schedule (\cref{sec:pat-permute}).
+  \item \emph{Block-by-block.} Blocks stay in natural order, so piece $j$ of a window is block $\nu^{-1}(\mathrm{rev}(w+j))$. The windows are the same as send. This is the strategy that benefits most from aggregation: the blocks are not adjacent, but the workers pack the pieces in the slot and they travel in one message.
+  \item \emph{Double send.} The generator keeps a circular window starting as $\{r\}$ (\texttt{winStart}$=r$). At step $k$ it sends the current window and receives the adjacent half of size $2^k$, below it if $r$ and $k$ have different parity and above it otherwise, the time reverse of the rule of \cref{sec:bfly-dhlv}. The received half is merged in the window. All indices are taken modulo $p$ with the mask $p-1$. The dimension of step $k$ is $s-1-k$ of $\Pi^{\mathrm{dh}}$, i.e., the partner $\Pi(r,k)$, and no pre-step or post-step is needed.
 \end{itemize}
 
 %==============================================================================
@@ -286,7 +286,7 @@ else if (hasPreStep && tid == S) {      // strategy "send" only
 \paragraph{Pre-step peers.}
 The pre-step of \emph{send} exchanges data with two ranks that are not, in general, partners of the butterfly: the rank that gets my block, $\nu^{-1}(\mathrm{rev}(r))$, and the one that gives me mine, $\mathrm{pos}(r)$.
 \texttt{bineAgPre} returns them with their dimension.
-If such a peer coincides with the partner of a step it takes that step's dimension, to avoid two connectors with two step counters for one connection; otherwise it takes the extra dimension $s$, served by one more thread.
+If such a peer coincides with the partner of a step it takes that step's dimension, to avoid two connectors with two step counters for one connection. Otherwise it takes the extra dimension $s$, served by one more thread.
 A rank thus has at most $s+2$ distinct peers, all set up with the other \bine{} connections (\cref{sec:nccl-channels}).
 
 \paragraph{Two flags of \texttt{patCopy}.}
@@ -319,11 +319,11 @@ Since the implementation uses slice mode, the columns of different channels are 
 
 For a permutation $f$ of $[0,p-1]$ (here $f(b)=\mathrm{pos}(b)$), the function replaces $\texttt{new}[x]=\texttt{old}[f(x)]$ following the cycles of $f$.
 \begin{itemize}
-  \item Each cycle is handled by its smallest index, found by walking the cycle from every $i$ and stopping at a smaller element; fixed points are skipped.
-  \item For the leader $i$ of a cycle, the threads split the \texttt{channelCount} columns; each saves the element of block $i$, moves along the cycle copying $\texttt{old}[f(\mathit{cur})]$ into $\mathit{cur}$, and closes the cycle with the saved element.
+  \item Each cycle is handled by its smallest index, found by walking the cycle from every $i$ and stopping at a smaller element. Fixed points are skipped.
+  \item For the leader $i$ of a cycle, the threads split the \texttt{channelCount} columns. Each saves the element of block $i$, moves along the cycle copying $\texttt{old}[f(\mathit{cur})]$ into $\mathit{cur}$, and closes the cycle with the saved element.
 \end{itemize}
 The columns are independent, so no synchronization is needed inside the permutation.
-The function runs in the hook \texttt{post}, executed by all the threads after the schedule thread and the workers have finished; the hook begins with a \texttt{\_\_syncthreads} so that every received piece is visible, and does nothing if the channel has no data.
+The function runs in the hook \texttt{post}, executed by all the threads after the schedule thread and the workers have finished. The hook begins with a \texttt{\_\_syncthreads} so that every received piece is visible, and does nothing if the channel has no data.
 Finding the leaders costs $O(\sum_C \lvert C\rvert^2)$ over the cycles $C$ of $f$ for each block, independent of the data, and negligible for the sizes in which \emph{permute} is used.
 
 %==============================================================================
@@ -334,7 +334,7 @@ We first compare the two implementations of \bine{} (\cref{sec:pat-res-bfly}), t
 
 \paragraph{Setup.}
 The measurements come from the same runs as those of \cref{sec:bfly-results}: Leonardo, nodes with four NVIDIA A100 GPUs connected by NVLink, $p\in\{4,8,16,32,64\}$ ranks (one to 16 nodes, one rank per GPU, consecutive ranks on the same node), block sizes from 1\,kB to 64\,MB, $10$ warmup and $40$ measured iterations, median latency.
-Only the allgather with \texttt{SIMPLE} is measured for \bine{}-\pat{} (\cref{sec:pat-prims}); the butterfly and the ring are also shown with \texttt{LL} where relevant.
+Only the allgather with \texttt{SIMPLE} is measured for \bine{}-\pat{} (\cref{sec:pat-prims}). The butterfly and the ring are also shown with \texttt{LL} where relevant.
 The butterfly runs with the partition of \cref{eq:bfly-pos} (pos mode for small blocks, slice mode otherwise), \bine{}-\pat{} always in slice mode (\cref{sec:pat-mapping}).
 
 %------------------------------------------------------------------------------
@@ -355,7 +355,7 @@ The butterfly runs with the partition of \cref{eq:bfly-pos} (pos mode for small 
 \setlength{\tabcolsep}{4pt}
 \renewcommand{\arraystretch}{1.1}
 \sisetup{table-format=1.2, detect-weight=true, mode=text}
-\caption{Median latency of \bine{}-\pat{} divided by that of the \bine{} butterfly, allgather with \texttt{SIMPLE}: same strategy (block-by-block, slice mode in both) and best strategy of each implementation. A value below $1$ means that \bine{}-\pat{} is faster; these values are in bold.}
+\caption{Median latency of \bine{}-\pat{} divided by that of the \bine{} butterfly, allgather with \texttt{SIMPLE}: same strategy (block-by-block, slice mode in both) and best strategy of each implementation. A value below $1$ means that \bine{}-\pat{} is faster. These values are in bold.}
 \label{tab:pat-vs-bfly}
 \begin{tabular}{@{}l *{5}{S} @{\hspace{2em}} *{5}{S}@{}}
 \toprule
@@ -380,20 +380,20 @@ The only point where \bine{}-\pat{} wins clearly, block-by-block at 1\,kB on $64
 
 \paragraph{Small blocks: the cost of an operation.}
 The solid purple lines of \cref{fig:pat-scaling} show that for small blocks the latency of \bine{}-\pat{} is linear in $p$, not logarithmic.
-At 1\,kB it grows from $47$ to $435$\,\textmu s between $4$ and $64$ ranks, by $6$--$8$\,\textmu s per added rank at every doubling (at 16\,kB by $7$--$9$\,\textmu s), close to the $8$--$11$\,\textmu s of the ring with \texttt{SIMPLE}; the butterfly with send in pos mode adds about $1.3$\,\textmu s per rank between $32$ and $64$ ranks.
+At 1\,kB it grows from $47$ to $435$\,\textmu s between $4$ and $64$ ranks, by $6$--$8$\,\textmu s per added rank at every doubling (at 16\,kB by $7$--$9$\,\textmu s), close to the $8$--$11$\,\textmu s of the ring with \texttt{SIMPLE}. The butterfly with send in pos mode adds about $1.3$\,\textmu s per rank between $32$ and $64$ ranks.
 The number of network transfers is not the cause: at these sizes $P$ is large, every step fits in one slot, and a channel posts $s$ messages (\cref{sec:pat-geom}).
 What remains linear is the number of operations: a channel moves $n_c(p-1)$ pieces in the butterfly, and each of them is one send and one receive, i.e., $2(p-1)$ entries of the ring for a single chunk, each executed by the workers in order, with a \texttt{patBarrier} and the polling of the ring (\cref{alg:pat-kernel}).
 The aggregation removes the empty FIFO steps of \cref{fig:bfly-slots}, but not the per-piece work on the device, and with a single group of workers the latter is serialized.
-The butterfly kernels of block-by-block also issue one call per block, but send and receive progress in two groups of threads (\cref{sec:bfly-kernels}), so the two halves of the work overlap; this is consistent with the per-rank cost of block-by-block at 16\,kB being about twice as large in \bine{}-\pat{} ($7$--$9$\,\textmu s) as in the butterfly ($3.6$--$4.7$\,\textmu s, between $8$ and $64$ ranks).
+The butterfly kernels of block-by-block also issue one call per block, but send and receive progress in two groups of threads (\cref{sec:bfly-kernels}), so the two halves of the work overlap. This is consistent with the per-rank cost of block-by-block at 16\,kB being about twice as large in \bine{}-\pat{} ($7$--$9$\,\textmu s) as in the butterfly ($3.6$--$4.7$\,\textmu s, between $8$ and $64$ ranks).
 
 Two changes would reduce this cost, both available in the native \pat{}.
-The first is a parallel factor larger than one, i.e., several groups of workers executing independent operations (\cref{sec:pat-kernel}); the second is to keep a received piece in the slot and forward it from there, as \pat{} does (\cref{tab:pat-vs-bine}): in the butterfly the half received at a step is part of the window sent at the next one, so its receive and its send could be one operation, which would remove the extra copy and part of the operations.
+The first is a parallel factor larger than one, i.e., several groups of workers executing independent operations (\cref{sec:pat-kernel}). The second is to keep a received piece in the slot and forward it from there, as \pat{} does (\cref{tab:pat-vs-bine}): in the butterfly the half received at a step is part of the window sent at the next one, so its receive and its send could be one operation, which would remove the extra copy and part of the operations.
 
 \paragraph{Large blocks.}
 From 256\,kB on the two implementations are within $15\,\%$, with \bine{}-\pat{} slower by $3$--$14\,\%$ from $16$ ranks on.
 With large blocks the pieces are full chunks in both implementations ($P=1$, \cref{sec:pat-geom}), so the aggregation has nothing to save, and \bine{}-\pat{} keeps the costs of \cref{sec:pat-prims}: one more local copy per received piece and sends and receives alternated slot by slot in the same threads, which limits the slots in flight on a connection.
 On $4$ ranks \bine{}-\pat{} is instead $4$--$9\,\%$ faster at every size, and on $8$ ranks it is faster up to 256\,kB and at 4\,MB.
-With few ranks the steps are few and short, and the setup that the butterfly repeats at every step (two \texttt{Primitives} objects and a barrier of the whole block, \cref{sec:pat-motivation}) weighs more; \bine{}-\pat{} builds its primitives once per kernel.
+With few ranks the steps are few and short, and the setup that the butterfly repeats at every step (two \texttt{Primitives} objects and a barrier of the whole block, \cref{sec:pat-motivation}) weighs more. \bine{}-\pat{} builds its primitives once per kernel.
 
 %------------------------------------------------------------------------------
 \FloatBarrier
@@ -404,7 +404,7 @@ With few ranks the steps are few and short, and the setup that the butterfly rep
 \begin{figure}[!tbp]
   \centering
   \includegraphics[width=0.73\linewidth]{AllGather_SIMPLE_best_algo_heatmap_BINE.png}
-  \caption{Allgather with \texttt{SIMPLE}: fastest \bine{} implementation and strategy for each block size and number of ranks (median latency), without the ring. Each cell lists the other combinations with the percentage by which they are slower. Bf: \bine{} butterfly, Pa: \bine{}-\pat{}; B, S, P, D: block-by-block, send, permute and double send.}
+  \caption{Allgather with \texttt{SIMPLE}: fastest \bine{} implementation and strategy for each block size and number of ranks (median latency), without the ring. Each cell lists the other combinations with the percentage by which they are slower. Bf: \bine{} butterfly, Pa: \bine{}-\pat{}. B, S, P, D: block-by-block, send, permute and double send.}
   \label{fig:pat-modes}
 \end{figure}
 
@@ -432,13 +432,13 @@ Block size & {send} & {double} & {permute} & {send} & {double} & {permute} \\
 \end{tabular}
 \end{table}
 
-In \bine{}-\pat{} the four strategies differ only in the pre-step, the order of the pieces and the post-step (\cref{tab:pat-strategies}); every strategy runs in slice mode and every piece is packed in a slot, so the data layout no longer changes the number of transfers.
+In \bine{}-\pat{} the four strategies differ only in the pre-step, the order of the pieces and the post-step (\cref{tab:pat-strategies}). Every strategy runs in slice mode and every piece is packed in a slot, so the data layout no longer changes the number of transfers.
 Below 16\,kB the four strategies are therefore within $1$--$37\,\%$ of one another, and send and double send lose the advantage of $3\times$ they have in the butterfly at 1\,kB, which came from pos mode and not from the strategy (\cref{sec:bfly-res-modes}).
 Block-by-block, which has neither a pre-step nor a post-step, is the best or within $3\,\%$ of the best at every point.
 
 The extra costs of the other strategies are those of the butterfly.
 Send pays the exchange of the pre-step, $10$--$29\,\%$ on $4$ to $16$ ranks and $1$--$8\,\%$ on $64$, since it moves one block against the $p-1$ of the butterfly.
-Permute pays the in-place permutation of the whole output buffer (\cref{sec:pat-permute}), $4$--$4.5\times$ the time of block-by-block from 1\,MB on on $64$ ranks; in absolute terms it takes within $9\,\%$ of the time of permute in the butterfly from 16\,kB on, so restricting the permutation to the slice of each channel neither helps nor hurts noticeably.
+Permute pays the in-place permutation of the whole output buffer (\cref{sec:pat-permute}), $4$--$4.5\times$ the time of block-by-block from 1\,MB on on $64$ ranks. In absolute terms it takes within $9\,\%$ of the time of permute in the butterfly from 16\,kB on, so restricting the permutation to the slice of each channel neither helps nor hurts noticeably.
 
 \paragraph{Double send.}
 Double send is $1.9$--$2.5\times$ slower than block-by-block from 256\,kB on, as in the butterfly (\cref{sec:bfly-res-modes}).
@@ -458,7 +458,7 @@ From 1\,MB on it is $1.3$--$2.2\times$ slower than the ring, slightly more than 
 \begin{figure}[!tbp]
   \centering
   \includegraphics[width=0.95\linewidth]{AllGather_SIMPLE+LL_best_algo_heatmap_bm-best.png}
-  \caption{Allgather: fastest algorithm and protocol for each block size and number of ranks (median latency), each \bine{} implementation with its best strategy. Each cell lists the other combinations with the percentage by which they are slower. Bf: \bine{} butterfly, Pa: \bine{}-\pat{}, R: \nccl{} ring; the suffixes S and LL are the protocols.}
+  \caption{Allgather: fastest algorithm and protocol for each block size and number of ranks (median latency), each \bine{} implementation with its best strategy. Each cell lists the other combinations with the percentage by which they are slower. Bf: \bine{} butterfly, Pa: \bine{}-\pat{}, R: \nccl{} ring. The suffixes S and LL are the protocols.}
   \label{fig:pat-heatmap-ring}
 \end{figure}
 
@@ -500,7 +500,7 @@ Both are still much faster than the ring with \texttt{SIMPLE}, whose latency is 
 The ring with \texttt{LL} is the fastest at 1\,kB on $4$ and $8$ ranks, but at $16$ ranks the native \pat{} overtakes it at 1\,kB, and both \pat{} implementations are faster than it at 16\,kB from $8$ ranks on (\bine{}-\pat{} by $1.22$ and $1.51\times$).
 
 \paragraph{Large blocks.}
-From 256\,kB on the three algorithms with \texttt{SIMPLE} are within $12\,\%$ of one another, and from 1\,MB within $8\,\%$; the ring with \texttt{LL} is $1.6$--$2.3\times$ slower than with \texttt{SIMPLE}.
+From 256\,kB on the three algorithms with \texttt{SIMPLE} are within $12\,\%$ of one another, and from 1\,MB within $8\,\%$. The ring with \texttt{LL} is $1.6$--$2.3\times$ slower than with \texttt{SIMPLE}.
 With one rank per node every transfer crosses the network, which is the bottleneck, and the three move the same volume, $\tfrac{p-1}{p}n$ per rank.
 \bine{}-\pat{} is $5$--$8\,\%$ faster than the native \pat{} on $16$ ranks from 1\,MB on.
 This is consistent with the shorter distances of the \bine{} schedule (\cref{sec:bg-bine-butterfly}), which matter on a network whose cost depends on the distance between nodes.
@@ -517,5 +517,5 @@ This is the counterpart of the measurement on $4$ ranks with four ranks per node
 Executing the \bine{} allgather on the \pat{} machinery removes the dependence of the transfers on the data layout: the four strategies issue the same messages, and block-by-block, the simplest, is the best one.
 It does not make the allgather faster.
 \bine{}-\pat{} is up to $12\,\%$ faster than the butterfly kernels on $4$ and, at some sizes, $8$ ranks, but from $16$ ranks on it is $3$--$14\,\%$ slower for large blocks and up to $2.2\times$ slower for small ones, where its latency grows linearly with $p$: the aggregation reduces the network messages to $s$ per channel, but each piece is still an operation on the device, executed in order by a single group of workers.
-With one rank per node the native \pat{} is $1.14$--$1.47\times$ faster than \bine{}-\pat{} up to 16\,kB, with the same machinery, which points to the two features that \bine{}-\pat{} lacks, a parallel factor larger than one and a fused receive-and-forward, as the natural next steps; for large blocks the two are within $8\,\%$, with \bine{}-\pat{} slightly ahead on $16$ ranks.
-The measurements also explain the slowdown of double send in both implementations: the distance-halving schedule sends its largest windows to the farthest partners, which are on other nodes, and moves $2$--$2.6\times$ as much data over the network as the distance-doubling one; with one rank per node, where all partners are on other nodes, the slowdown disappears.
+With one rank per node the native \pat{} is $1.14$--$1.47\times$ faster than \bine{}-\pat{} up to 16\,kB, with the same machinery, which points to the two features that \bine{}-\pat{} lacks, a parallel factor larger than one and a fused receive-and-forward, as the natural next steps. For large blocks the two are within $8\,\%$, with \bine{}-\pat{} slightly ahead on $16$ ranks.
+The measurements also explain the slowdown of double send in both implementations: the distance-halving schedule sends its largest windows to the farthest partners, which are on other nodes, and moves $2$--$2.6\times$ as much data over the network as the distance-doubling one. With one rank per node, where all partners are on other nodes, the slowdown disappears.

@@ -21,7 +21,7 @@ The library is organised in two halves that cooperate during a collective.
 \end{description}
 
 The choice of the algorithm (ring, tree, \dots) and of the protocol is made by a tuning model that estimates, for each pair, the latency and bandwidth from the topology and the message size, and picks the pair with the lowest expected time.
-The kernel for a given collective is selected through a function identifier (\texttt{devFuncId}) that encodes the collective, the algorithm, the protocol, the datatype and the reduction operator; the kernels are therefore instantiated at compile time for each combination.
+The kernel for a given collective is selected through a function identifier (\texttt{devFuncId}) that encodes the collective, the algorithm, the protocol, the datatype and the reduction operator. The kernels are therefore instantiated at compile time for each combination.
 
 \section{Topology and graphs}\label{sec:nccl-graph}
 
@@ -32,10 +32,10 @@ The search produces, for every pattern, a number of \emph{channels} and, for eve
 
 Two graphs are of interest in this thesis.
 \begin{itemize}
-  \item The \emph{ring graph}: each channel is a ring that visits all the ranks; inside a node the order of the GPUs follows the fastest links, and between nodes the ring leaves from and enters into the GPUs closest to a network interface.
-  For a fixed set of channels, finding this ordering is finding the cycle through all the ranks that makes the best use of the links, a problem in the same family as the travelling salesman problem; \nccl{} does not solve it with a dedicated TSP algorithm, but with the same backtracking search above, run with the ring pattern.
+  \item The \emph{ring graph}: each channel is a ring that visits all the ranks. Inside a node the order of the GPUs follows the fastest links, and between nodes the ring leaves from and enters into the GPUs closest to a network interface.
+  For a fixed set of channels, finding this ordering is finding the cycle through all the ranks that makes the best use of the links, a problem in the same family as the travelling salesman problem. \nccl{} does not solve it with a dedicated TSP algorithm, but with the same backtracking search above, run with the ring pattern.
   \item The \emph{tree graph}: inside a node the GPUs are connected in a chain, and the nodes are connected to each other with a double binary tree, in which every node is a leaf in one of the two trees and an internal node in the other.
-  The two trees are not searched independently: the search (pattern \texttt{BALANCED\_TREE}) books only half of the inter-node bandwidth at the two GPUs that enter and leave the node, since the mirrored second tree will carry the other half there, and the second tree itself is obtained from the first by a fixed, topology-independent rule, mirroring the rank identifiers when their number is even and shifting them by one position when it is odd (see~\cite{hu2025demystifying} and Sec.~\ref{sec:bg-double-tree}); this combination, not a separate balancing step, is what keeps the load on the links even between the two trees (Sec.~\ref{sec:nccl-tree}).
+  The two trees are not searched independently: the search (pattern \texttt{BALANCED\_TREE}) books only half of the inter-node bandwidth at the two GPUs that enter and leave the node, since the mirrored second tree will carry the other half there, and the second tree itself is obtained from the first by a fixed, topology-independent rule, mirroring the rank identifiers when their number is even and shifting them by one position when it is odd (see~\cite{hu2025demystifying} and Sec.~\ref{sec:bg-double-tree}). This combination, not a separate balancing step, is what keeps the load on the links even between the two trees (Sec.~\ref{sec:nccl-tree}).
 \end{itemize}
 The results of the search are stored in the per-channel structures \texttt{ncclRing} and \texttt{ncclTree}, which record for each rank its predecessor and successor in the ring, and its parent and children in the tree.
 These are the peers that the kernels read to know whom to send to and receive from.
@@ -48,13 +48,13 @@ This is not a design choice made for \bine{}: the ring permutation happens to wo
 \section{Channels}\label{sec:nccl-channels}
 
 A \emph{channel} is the unit of parallelism of \nccl{}.
-It is an independent set of connections to the peers of the algorithm (the ring neighbours, or the tree parent and children) together with its own buffers, and it is executed by exactly one thread block of the kernel; the kernel is launched with as many blocks as there are channels in use (Fig.~\ref{fig:nccl-channels}).
+It is an independent set of connections to the peers of the algorithm (the ring neighbours, or the tree parent and children) together with its own buffers, and it is executed by exactly one thread block of the kernel. The kernel is launched with as many blocks as there are channels in use (Fig.~\ref{fig:nccl-channels}).
 Different channels move different, disjoint portions of the data concurrently, and may follow different paths in the machine (for example, different rings, or different network interfaces), which is how \nccl{} uses several links at the same time.
 
 The number of channels is bounded by the graph search and by \texttt{MAXCHANNELS}, and for each collective the number actually used depends on the vector size, since a small message does not justify the use of many blocks.
 Every channel has its own copy of the peer information (the \texttt{ncclChannel} structure on the host, \texttt{ncclDevChannel} on the device), and at the start of the kernel each block copies the state of its channel in the shared memory of the block, in the \texttt{ncclShmem} structure.
 \texttt{ncclShmem} holds the communicator information (rank, number of ranks), the identifier of the channel (\texttt{channelId}), the channel structure with the peers of each algorithm, and the description of the work to execute (\texttt{ncclDevWorkColl}, Sec.~\ref{sec:nccl-distribution}).
-Each algorithm adds its own data to the channel structure; the Bine tables of Chapters~\ref{ch:tree} and~\ref{ch:butterfly} are stored there, in \texttt{channel.bine}.
+Each algorithm adds its own data to the channel structure, and the Bine tables of Chapters~\ref{ch:tree} and~\ref{ch:butterfly} are stored there, in \texttt{channel.bine}.
 
 An important property, used in Chapter~\ref{ch:butterfly}, is that a connection belongs to a channel: the connections of a channel are created once, at communicator creation, between the peers that the algorithm needs, and the kernel cannot create new ones.
 An algorithm in which a rank talks to a number of distinct peers that grows with the number of ranks would need as many connections per channel.
@@ -120,7 +120,7 @@ The main transports are:
 
 A connection is a small set of shared structures, mainly the intermediate buffer for each protocol (Sec.~\ref{sec:nccl-protocols}) and a pair of counters.
 The buffer is divided in \texttt{NCCL\_STEPS}$=8$ \emph{slots} (also called steps).
-The sender fills a slot and advances the \texttt{head}/\texttt{tail} counter; the receiver waits on the counter, consumes the slot and advances the other counter, which returns the slot to the sender.
+The sender fills a slot and advances the \texttt{head}/\texttt{tail} counter. The receiver waits on the counter, consumes the slot and advances the other counter, which returns the slot to the sender.
 This is a producer/consumer FIFO of $8$ slots, and it is what allows the sender to proceed up to $8$ slots ahead of the receiver without any other synchronisation.
 The size of a slot (\texttt{stepSize}) is the size of the buffer of the protocol divided by \texttt{NCCL\_STEPS}, and defines the chunk (Sec.~\ref{sec:nccl-chunks}, Fig.~\ref{fig:nccl-slots}).
 
@@ -170,7 +170,7 @@ The flags \texttt{NCCL\_P2P\_WRITE} and \texttt{NCCL\_P2P\_READ} in the field \t
   \end{tikzpicture}}
   \caption{From the vector to the slots. The vector is split in one slice per channel,
            the slice is processed in chunks, and each chunk goes through one slot of the
-           FIFO of the connection of the channel; the size of a slot (\texttt{stepSize})
+           FIFO of the connection of the channel. The size of a slot (\texttt{stepSize})
            defines the chunk.}
   \label{fig:nccl-slots}
 \end{figure}
@@ -182,10 +182,10 @@ For this reason each process runs a \emph{proxy} service made of host threads: a
 When a collective that uses the \texttt{NET} transport is enqueued, the host also enqueues, for every channel, a \emph{proxy operation} (\texttt{ncclProxyOp}) that contains the information that the proxy needs: the channel, the offset and size of the portion of data of that channel (\texttt{loopOffset}, \texttt{channelSize}), the chunk size and the number of steps.
 The proxy then drives the network in lockstep with the kernel through the slot counters of Sec.~\ref{sec:nccl-transport}:
 \begin{itemize}
-  \item on the send side, when the kernel has filled a slot in the staging buffer and advanced the counter, the proxy posts the network send for it, and returns the slot to the kernel when the send completes;
+  \item on the send side, when the kernel has filled a slot in the staging buffer and advanced the counter, the proxy posts the network send for it, and returns the slot to the kernel when the send completes,
   \item on the receive side, the proxy posts the receive into a free slot, and signals the kernel when the data has arrived.
 \end{itemize}
-The kernel therefore sees the network exactly as it sees an intra-node connection, a FIFO of slots; the difference is that on the \texttt{NET} transport somebody else (the proxy) moves the slots between the two nodes.
+The kernel therefore sees the network exactly as it sees an intra-node connection, a FIFO of slots. The difference is that on the \texttt{NET} transport somebody else (the proxy) moves the slots between the two nodes.
 Because the proxy has to know in advance the sequence of operations and sizes that the kernel will execute, the proxy operation is derived from the same partition of the work as the kernel (Sec.~\ref{sec:nccl-cbd}).
 This is also a constraint for new algorithms: the sequence of transfers on a connection must be the one that the proxy expects.
 
@@ -247,7 +247,7 @@ In the code the protocol is a template parameter of the kernels, and it is chose
   \caption{Partitioning of the vector for the three protocols. The vector is split in one
            slice per channel, each slice in chunks, and each chunk in grains, the smallest
            unit of data that is assigned (\texttt{ncclProtoGrainSize}). Sizes are those of
-           the default configuration~\cite{hu2025demystifying}; the picture is not to scale.}
+           the default configuration~\cite{hu2025demystifying}. The picture is not to scale.}
   \label{fig:nccl-grain}
 \end{figure}
 
@@ -257,7 +257,7 @@ An \emph{algorithm} defines the communication pattern.
 The ones relevant here are \emph{ring} (each rank communicates only with its predecessor and successor, and data circulates around the ring: $\bigO{p}$ steps for $p$ ranks), \emph{tree} (the double binary tree of Sec.~\ref{sec:bg-double-tree}, used for the allreduce, $\bigO{\log p}$ steps across nodes, Sec.~\ref{sec:nccl-tree}) and \pat{}~\cite{jeaugey2025pat} for all-gather and reduce-scatter (Sec.~\ref{sec:nccl-pat}).
 Algorithms for in-network reduction (\texttt{NVLS}, \texttt{CollNet}) exist as well.
 For every algorithm and collective there is a device function that implements the pattern, and a \emph{pattern} identifier (\texttt{ncclPattern\_t}) used by the host to compute the number of steps and the chunking.
-The Bine algorithms of Chapters~\ref{ch:tree} and~\ref{ch:butterfly} are new device functions of this kind, registered as a new algorithm, \texttt{NCCL\_ALGO\_BINE}, with its own pattern identifier (\texttt{ncclPatternBine}); the Bine allgather of Chapter~\ref{ch:pat} reuses the device-side machinery of \pat{}.
+The Bine algorithms of Chapters~\ref{ch:tree} and~\ref{ch:butterfly} are new device functions of this kind, registered as a new algorithm, \texttt{NCCL\_ALGO\_BINE}, with its own pattern identifier (\texttt{ncclPatternBine}). The Bine allgather of Chapter~\ref{ch:pat} reuses the device-side machinery of \pat{}.
 
 \section{Work distribution across channels}\label{sec:nccl-distribution}
 
@@ -329,7 +329,7 @@ The Bine algorithms of Chapters~\ref{ch:tree} and~\ref{ch:butterfly} are new dev
   \end{tikzpicture}}
   \caption{Traffic-based splitting. (a)~The input of each collective is weighted by its
            \texttt{trafficPerByte} $\tau$, and the total traffic is divided equally among the
-           channels; channels can therefore carry different numbers of elements.
+           channels. Channels can therefore carry different numbers of elements.
            (b)~Data is assigned in cells (the amount of data generating $32$\,KiB of
            traffic), so a small message uses only as many channels as it has cells.}
   \label{fig:nccl-traffic}
@@ -351,11 +351,11 @@ The cells are assigned to the channels in order, filling a channel before moving
 Several collectives issued together (aggregated in the same plan) can be laid out one after the other on the same sequence of channels: a collective may start in the middle of a channel that is partially filled by the previous one.
 Therefore the channels used by a collective are of three kinds:
 \begin{itemize}
-  \item the \emph{lo} channel, \texttt{channelLo}, the first one, which only receives the cells that fit in the traffic still available in it (\texttt{countLo} elements);
-  \item $n_{mid}$ \emph{mid} channels, which are completely filled and receive the same number of elements (\texttt{countMid});
+  \item the \emph{lo} channel, \texttt{channelLo}, the first one, which only receives the cells that fit in the traffic still available in it (\texttt{countLo} elements),
+  \item $n_{mid}$ \emph{mid} channels, which are completely filled and receive the same number of elements (\texttt{countMid}),
   \item the \emph{hi} channel, \texttt{channelHi}, the last one, which receives the remainder (\texttt{countHi}).
 \end{itemize}
-If the collective fits in the lo channel there are neither mid nor hi channels; the remainder of the last channel is also trimmed so that the total is exactly the number of elements of the collective.
+If the collective fits in the lo channel there are neither mid nor hi channels. The remainder of the last channel is also trimmed so that the total is exactly the number of elements of the collective.
 The channels used are $[\texttt{channelLo},\texttt{channelHi}]$, and $n_{mid}=\texttt{channelHi}-\texttt{channelLo}-1$.
 The host writes this in the work descriptor \texttt{ncclDevWorkColl}, which is passed to the kernel together with the buffers, the root, the number of warps and the \texttt{direct} flags:
 \begin{lstlisting}[language=C++,caption={Fields of \texttt{ncclDevWorkColl} that describe the CBD partition (simplified).},label={lst:cbd-fields}]
@@ -378,9 +378,9 @@ $\mathit{count},\mathit{partOffset},\mathit{partCount},\mathit{chunkCount})$
 to obtain its share.
 Given the channel identifier it returns:
 \begin{itemize}
-  \item \texttt{partOffset} (called \texttt{gridOffset} in the kernels): the offset, in elements, of the slice of the channel; it is $0$ for the lo channel, $\texttt{countLo}+m\cdot\texttt{countMid}$ for the $m$-th mid channel ($m$ counted from $0$), and $\texttt{countLo}+n_{mid}\cdot\texttt{countMid}$ for the hi channel;
-  \item \texttt{partCount} (\texttt{channelCount}): the number of elements of the slice, i.e., \texttt{countLo}, \texttt{countMid} or \texttt{countHi};
-  \item \texttt{chunkCount}: the number of elements of a chunk (Sec.~\ref{sec:nccl-chunks}), equal to the corresponding \texttt{chunkGrains} multiplied by the number of elements in a grain of the protocol, $\texttt{ncclProtoGrainSize}(\mathit{proto})/\mathit{eltSize}$;
+  \item \texttt{partOffset} (called \texttt{gridOffset} in the kernels): the offset, in elements, of the slice of the channel, $0$ for the lo channel, $\texttt{countLo}+m\cdot\texttt{countMid}$ for the $m$-th mid channel ($m$ counted from $0$), and $\texttt{countLo}+n_{mid}\cdot\texttt{countMid}$ for the hi channel,
+  \item \texttt{partCount} (\texttt{channelCount}): the number of elements of the slice, i.e., \texttt{countLo}, \texttt{countMid} or \texttt{countHi},
+  \item \texttt{chunkCount}: the number of elements of a chunk (Sec.~\ref{sec:nccl-chunks}), equal to the corresponding \texttt{chunkGrains} multiplied by the number of elements in a grain of the protocol, $\texttt{ncclProtoGrainSize}(\mathit{proto})/\mathit{eltSize}$,
   \item optionally \texttt{count}, the total number of elements $\texttt{countLo}+n_{mid}\cdot\texttt{countMid}+\texttt{countHi}$, if a non-null pointer is given.
 \end{itemize}
 The three sizes are a function of the work descriptor and of the channel identifier only, so every rank, which receives the same descriptor for the same collective, computes the same partition.
@@ -390,8 +390,8 @@ The proxy operations of Sec.~\ref{sec:nccl-proxy} are built from the same values
 \subsection{Chunking}\label{sec:nccl-chunks}
 
 A channel does not move its slice with a single transfer, but a \emph{chunk} at a time (Fig.~\ref{fig:nccl-slots}).
-The chunk is bounded by the size of a slot of the connection: for the tree algorithm it is a slot, $\mathit{stepSize}=\mathit{bufferSize}/\texttt{NCCL\_STEPS}$, halved for LL (half of the slot is flags), and scaled by $120/128$ for LL128 (the data of a line); the resulting sizes for the three protocols are shown in Fig.~\ref{fig:nccl-grain}.
-The host computes the chunk (\texttt{calcCollChunking}; a few algorithms, such as \texttt{NVLS} and \texttt{CollNet}, shrink it for small messages) and stores it in the descriptor as a number of grains, which \texttt{ncclCollCbdPart} converts back to elements.
+The chunk is bounded by the size of a slot of the connection: for the tree algorithm it is a slot, $\mathit{stepSize}=\mathit{bufferSize}/\texttt{NCCL\_STEPS}$, halved for LL (half of the slot is flags), and scaled by $120/128$ for LL128 (the data of a line). The resulting sizes for the three protocols are shown in Fig.~\ref{fig:nccl-grain}.
+The host computes the chunk (\texttt{calcCollChunking}, a few algorithms, such as \texttt{NVLS} and \texttt{CollNet}, shrink it for small messages) and stores it in the descriptor as a number of grains, which \texttt{ncclCollCbdPart} converts back to elements.
 The kernel loops over the chunks of its slice and the last chunk is shorter if the slice is not a multiple of the chunk.
 Because the slot FIFO has several slots, consecutive chunks are pipelined: while a chunk is being consumed by the receiver the sender can already fill the following ones, as in Fig.~\ref{fig:nccl-slots}, where chunk $i+8$ reuses slot $i$ once the receiver has returned it.
 
@@ -412,25 +412,25 @@ It is a class template whose parameters are the datatype \texttt{T}, the reducti
 An object is constructed with the thread identifier and the number of threads, the arrays of the ranks to receive from and to send to, and the input and output buffers.
 At construction the object loads, from the channel, the connectors towards those peers (buffers and counters), so that the same code works with every transport and protocol.
 \begin{itemize}
-  \item \texttt{FanSymmetric}$\langle N\rangle$ and \texttt{FanAsymmetric}$\langle R,S\rangle$ fix the number of receive peers $R$ and of send peers $S$ at compile time. The ring kernels use \texttt{FanSymmetric}$\langle1\rangle$ ($1$ peer in each direction), the tree kernels use asymmetric fans whose receive or send side is the maximum number of children of the tree; a kernel that at every step either receives from one peer or sends to one peer uses $\langle 1,0\rangle$ or $\langle 0,1\rangle$.
+  \item \texttt{FanSymmetric}$\langle N\rangle$ and \texttt{FanAsymmetric}$\langle R,S\rangle$ fix the number of receive peers $R$ and of send peers $S$ at compile time. The ring kernels use \texttt{FanSymmetric}$\langle1\rangle$ ($1$ peer in each direction), the tree kernels use asymmetric fans whose receive or send side is the maximum number of children of the tree. A kernel that at every step either receives from one peer or sends to one peer uses $\langle 1,0\rangle$ or $\langle 0,1\rangle$.
 \end{itemize}
 The operations of a \texttt{Primitives} object are executed by all the threads of the block on a number of elements $n$ that must fit in a chunk.
 Offsets are in elements, relative to the input buffer (\texttt{inpIx}) or to the output buffer (\texttt{outIx}).
 \begin{description}
   \item[\texttt{send}$(o_{in},n)$] reads $n$ elements from the input buffer and sends them to the peer(s).
   \item[\texttt{recv}$(o_{out},n)$] receives $n$ elements from the peer(s) and stores them in the output buffer.
-  \item[\texttt{directSend}$(o_{in},o_{out},n)$ and \texttt{directRecv}$(o_{out},n)$] the same operations on the zero-copy path: the data is exchanged directly with the user buffer of the peer (with a write by the sender, or a read by the receiver) instead of through the slots of the connection; the output offset tells where the data lands in the buffer of the peer. They are usable only when the transport and the registered buffers allow it, as indicated by the \texttt{direct} flags of the work descriptor, and otherwise the kernel uses the staged versions.
+  \item[\texttt{directSend}$(o_{in},o_{out},n)$ and \texttt{directRecv}$(o_{out},n)$] the same operations on the zero-copy path: the data is exchanged directly with the user buffer of the peer (with a write by the sender, or a read by the receiver) instead of through the slots of the connection. The output offset tells where the data lands in the buffer of the peer. They are usable only when the transport and the registered buffers allow it, as indicated by the \texttt{direct} flags of the work descriptor, and otherwise the kernel uses the staged versions.
   \item[\texttt{copySend}, \texttt{directCopySend}$(o_{in},o_{out},n)$] send $n$ elements and, in addition, store them in the local output buffer.
-  \item[\texttt{recvSend}, \texttt{recvCopySend}, \texttt{recvReduceSend}, \texttt{recvReduceCopy}, \dots] fused operations that receive, optionally reduce with the local input, optionally copy to the output, and forward to the next peer in a single pass over the data. They are what makes the ring and the tree efficient, since data is not written to and read back from memory between the receive and the send. The Bine broadcast and reduce of Chapter~\ref{ch:tree} do not use the ones that also send, since in each step a rank either receives or sends; the reduce uses \texttt{recvReduceCopy}, which stops at the reduction and the copy.
+  \item[\texttt{recvSend}, \texttt{recvCopySend}, \texttt{recvReduceSend}, \texttt{recvReduceCopy}, \dots] fused operations that receive, optionally reduce with the local input, optionally copy to the output, and forward to the next peer in a single pass over the data. They are what makes the ring and the tree efficient, since data is not written to and read back from memory between the receive and the send. The Bine broadcast and reduce of Chapter~\ref{ch:tree} do not use the ones that also send, since in each step a rank either receives or sends. The reduce uses \texttt{recvReduceCopy}, which stops at the reduction and the copy.
   \item[\texttt{sendFromOutput}, \texttt{directSendFromOutput}$(o,n)$] send $n$ elements read from the output buffer instead of the input buffer, to forward a partial result that has been accumulated there.
 \end{description}
 Under the hood the data movement is done by \texttt{reduceCopy}, a device routine that reads from a number of sources, optionally reduces them with the operator, and writes to a number of destinations, with a protocol-specific load/store path.
 It can also be called directly by a kernel, and it is used, with one source and one destination, as a plain copy, for example to copy the local buffer when the input and output buffers are different.
-These operations are heavily tuned for a fixed, small number of peers, such as rings and trees~\cite{hu2025demystifying}; \pat{} and the Bine allgather of Chapter~\ref{ch:pat} drive up to $O(\log p)$ peers per rank through a dedicated mode of the \texttt{Simple} primitives (Sec.~\ref{sec:nccl-pat-impl}).
+These operations are heavily tuned for a fixed, small number of peers, such as rings and trees~\cite{hu2025demystifying}. \pat{} and the Bine allgather of Chapter~\ref{ch:pat} drive up to $O(\log p)$ peers per rank through a dedicated mode of the \texttt{Simple} primitives (Sec.~\ref{sec:nccl-pat-impl}).
 
 \paragraph{FIFO cost of a call.}\label{sec:nccl-fifo-cost}
 Every operation of the \texttt{Simple} primitives (all but the \pat{} mode) consumes a fixed number of FIFO steps, independent of the number of elements.
-A call goes through \texttt{SlicePerChunk} slices, and each slice advances the step counter by \texttt{StepPerSlice} on the receive and on the send side; slices left empty because the call has fewer elements than a chunk are still traversed, with size zero, and a call with $n=0$ elements consumes the same steps as a full one.
+A call goes through \texttt{SlicePerChunk} slices, and each slice advances the step counter by \texttt{StepPerSlice} on the receive and on the send side. Slices left empty because the call has fewer elements than a chunk are still traversed, with size zero, and a call with $n=0$ elements consumes the same steps as a full one.
 The cost of a call is therefore $\texttt{SlicePerChunk}\cdot\texttt{StepPerSlice}$ steps, that is, one chunk of the slot FIFO (Sec.~\ref{sec:nccl-chunks}), and the connection steps are kept aligned to this quantity from one operation to the next.
 Only the data movement and the memory fence depend on the size.
 This has two consequences for new algorithms.
@@ -442,8 +442,8 @@ The \pat{} mode is different: an operation advances the step only if it closes t
 
 The structure that every kernel in \nccl{} follows, and that the Bine kernels of Chapters~\ref{ch:tree} and~\ref{ch:butterfly} reproduce, can be summarised as
 \begin{enumerate}
-  \item read the descriptor of the work from \texttt{ncclShmem};
-  \item obtain the slice and the chunk size of the channel with \texttt{ncclCollCbdPart};
+  \item read the descriptor of the work from \texttt{ncclShmem},
+  \item obtain the slice and the chunk size of the channel with \texttt{ncclCollCbdPart},
   \item for each chunk of the slice and each step of the algorithm, determine the peers of the rank in that step, instantiate the \texttt{Primitives} with these peers (or reuse one), and call the operation that corresponds to the role of the rank in the step.
 \end{enumerate}
 The pattern of the communication of each step is therefore the only part that is specific to the algorithm, which is the part that the Bine schedule replaces.
@@ -467,7 +467,7 @@ Each of them is executed for every chunk of the slice of the channel (\cref{sec:
 \begin{table}[t]
 \centering
 \small
-\caption{Primitives of the \nccl{} tree allreduce for each role (\texttt{runTreeSplit}; the \texttt{direct} prefix is omitted). The reduce and the broadcast are executed by two different groups of threads, except at the root.}
+\caption{Primitives of the \nccl{} tree allreduce for each role (\texttt{runTreeSplit}, the \texttt{direct} prefix is omitted). The reduce and the broadcast are executed by two different groups of threads, except at the root.}
 \label{tab:nccl-tree-calls}
 \begin{tabular}{@{}lll@{}}
 \toprule
@@ -511,7 +511,7 @@ Unlike recursive doubling, \pat{} is defined for any number of ranks.
 \paragraph{Scope in \nccl{}.}
 \pat{} was introduced in \nccl{} 2.23 with a restriction to one rank (GPU) per node: only its inter-node part is implemented~\cite{jeaugey2025pat}.
 The restriction is one of implementation, not of the algorithm.
-The author notes that intra-node support is possible, as in the CollNet algorithms of \nccl{}, and that the main difficulty is the additional complexity of an already complex algorithm~\cite{jeaugey2025pat}; the case with one GPU per node was the first to be covered because it is the one of the data-parallel groups of LLM training, where tensor parallelism takes the GPUs of a node~\cite{jeaugey2025nccl223}.
+The author notes that intra-node support is possible, as in the CollNet algorithms of \nccl{}, and that the main difficulty is the additional complexity of an already complex algorithm~\cite{jeaugey2025pat}. The case with one GPU per node was the first to be covered because it is the one of the data-parallel groups of LLM training, where tensor parallelism takes the GPUs of a node~\cite{jeaugey2025nccl223}.
 The analysis of~\cite{hu2025demystifying} is based on \nccl{} 2.19.1, predates it and leaves it out of its scope, so the description below comes from~\cite{jeaugey2025pat} and from the source code.
 
 \subsection{Implementation in \nccl{}}\label{sec:nccl-pat-impl}
@@ -535,7 +535,7 @@ The flags mark entries that are skipped (\texttt{PatSkipped}).
 
 \paragraph{Groups of workers.}
 The schedule thread is the thread with index \texttt{NCCL\_PAT\_NWORKERS}, just after the workers, and it tells the workers how many operations the algorithm can run in parallel, the \emph{parallel factor}.
-The workers are split in $\texttt{parallelFactor}$ groups of $\texttt{nworkers}/(\texttt{WARP\_SIZE}\cdot\texttt{parallelFactor})$ warps; each group has its own \texttt{Primitives} object and executes every $n_{\mathrm{groups}}$-th entry of the ring, starting from the entry of its index.
+The workers are split in $\texttt{parallelFactor}$ groups of $\texttt{nworkers}/(\texttt{WARP\_SIZE}\cdot\texttt{parallelFactor})$ warps. Each group has its own \texttt{Primitives} object and executes every $n_{\mathrm{groups}}$-th entry of the ring, starting from the entry of its index.
 The kernel of the all-gather is the specialization of \texttt{RunWorkColl} for \texttt{NCCL\_ALGO\_PAT} and the \texttt{Simple} protocol: it gets its slice with \texttt{ncclCollCbdPart} (Sec.~\ref{sec:nccl-cbd}), clears the ring, builds the generator \texttt{PatAGAlgorithm} in the schedule thread and the \texttt{Primitives} in \texttt{primsModePatAg} in the workers, and runs the two loops above.
 
 \paragraph{Primitives in \pat{} mode.}
@@ -551,4 +551,4 @@ The data of many small pieces, possibly taken from non-contiguous places of the 
 Each connector also records how much of the data in its slot has already been copied or accumulated (\texttt{accSize}), so that an operation knows whether the data in the slot is new, and has to be initialised, or has already been handled, and in the reduce-scatter has to be accumulated.
 A rank that receives data that it must forward can send it from the slot where it was received, without a second copy.
 
-The channels, the slots and the protocols on which these mechanisms rely are analysed in~\cite{hu2025demystifying}; note that the primitives described there are tuned for a fixed small number of peers, which is why \pat{}, with $O(\log p)$ peers per rank, drives the connections through its own mode instead.
+The channels, the slots and the protocols on which these mechanisms rely are analysed in~\cite{hu2025demystifying}. Note that the primitives described there are tuned for a fixed small number of peers, which is why \pat{}, with $O(\log p)$ peers per rank, drives the connections through its own mode instead.

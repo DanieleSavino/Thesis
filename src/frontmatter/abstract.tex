@@ -10,7 +10,7 @@ The same allgather is rebuilt a second time on \pat{}, \nccl{}'s own device-side
 Finally, a tree-based allreduce, a composition not described in the original \bine{} paper but one that maps well onto \nccl{}'s channel system, roots a \bine{} tree differently on each channel, one root per channel instead of one per rank, and executes the reduce and the broadcast as a single fused kernel following the structure of \nccl{}'s own tree allreduce.
 
 Each component is evaluated across two supercomputers against \nccl{}'s native ring, tree and \pat{} algorithms.
-The tree-based broadcast and reduce outperform the ring in the band of message sizes between the ring's latency-optimised and its bandwidth-bound regimes, where the tree's logarithmic step count dominates.
+The tree-based broadcast and reduce outperform the ring over almost the whole range of message sizes once there are enough ranks, where the logarithmic step count of the tree dominates, and lose only for the largest vectors, where the operation becomes bandwidth-bound and the pipelining of the ring is optimal.
 The tree-based allreduce is the fastest algorithm overall for small and medium vectors from a moderate number of ranks on.
 The allgather rebuilt on \pat{}, instead, does not improve on the butterfly kernels when several GPUs share a node; \nccl{}'s own \pat{} allgather is implemented only for one GPU per node, and in that configuration the two are competitive.
 Taken together, the results give a precise account of where, inside \nccl{}, the locality of \bine{} pays for itself, and where \nccl{}'s own bandwidth-oriented algorithms remain the better choice.
